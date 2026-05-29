@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Script Execution Results</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .results-container {
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #34495e;
+        }
+        .results-header h1 {
+            margin: 0;
+            color: #2c3e50;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .result-section {
+            margin: 20px 0;
+        }
+        .result-section h3 {
+            color: #2c3e50;
+            border-left: 4px solid #3498db;
+            padding-left: 10px;
+            margin: 15px 0 10px 0;
+        }
+        .result-section pre {
+            background: #ecf0f1;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            max-height: none;
+            border: 1px solid #bdc3c7;
+        }
+        .result-section pre.stderr {
+            background: #ffe0e0;
+            color: #c0392b;
+            border-color: #e74c3c;
+        }
+        .metadata {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .metadata-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .metadata-label {
+            font-weight: bold;
+            color: #555;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+        .metadata-value {
+            font-family: 'Courier New', monospace;
+            color: #2c3e50;
+            font-size: 14px;
+        }
+        .back-button {
+            background: #95a5a6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 14px;
+        }
+        .back-button:hover {
+            background: #7f8c8d;
+        }
+    </style>
+</head>
+<body>
+    <div class="results-container">
+        <div class="results-header">
+            <h1>Script Execution Results</h1>
+            <span class="status-badge {% if success %}status-success{% else %}status-error{% endif %}">
+                {% if success %}✓ Success{% else %}✗ Error{% endif %}
+            </span>
+        </div>
+
+        <div class="metadata">
+            <div class="metadata-item">
+                <span class="metadata-label">Script Name</span>
+                <span class="metadata-value">{{ script_name }}</span>
+            </div>
+            <div class="metadata-item">
+                <span class="metadata-label">Return Code</span>
+                <span class="metadata-value">{{ return_code }}</span>
+            </div>
+            <div class="metadata-item">
+                <span class="metadata-label">Execution Time</span>
+                <span class="metadata-value">{{ "%.2f"|format(execution_time) }}s</span>
+            </div>
+            <div class="metadata-item">
+                <span class="metadata-label">Status</span>
+                <span class="metadata-value">{% if success %}Completed Successfully{% else %}Completed with Errors{% endif %}</span>
+            </div>
+            {% if error %}
+            <div class="metadata-item">
+                <span class="metadata-label">Error</span>
+                <span class="metadata-value" style="color: #c0392b;">{{ error }}</span>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if stdout %}
+        <div class="result-section">
+            <h3>Output</h3>
+            <pre>{{ stdout }}</pre>
+        </div>
+        {% endif %}
+
+        {% if stderr %}
+        <div class="result-section">
+            <h3>Errors</h3>
+            <pre class="stderr">{{ stderr }}</pre>
+        </div>
+        {% endif %}
+
+        {% if not stdout and not stderr and error %}
+        <div class="result-section">
+            <p style="color: #c0392b;">{{ error }}</p>
+        </div>
+        {% endif %}
+
+        <div class="result-section" style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #bdc3c7;">
+            <a href="/dashboard" class="back-button">← Back to Dashboard</a>
+        </div>
+    </div>
+
+    <script>
+        // Clear any pending timeout since results page loaded
+        if (window.scriptExecutionTimeout) {
+            clearTimeout(window.scriptExecutionTimeout);
+            window.scriptExecutionTimeout = null;
+        }
+    </script>

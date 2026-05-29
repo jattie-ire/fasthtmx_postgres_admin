@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Row - FastAPI HTMX App{% endblock %}
+
+{% block page_title %}Edit Row in {{ table_name }}{% endblock %}
+
+{% block page_content %}
+<form method="POST" action="/save-row" style="max-width: 500px;">
+    <input type="hidden" name="table_name" value="{{ table_name }}">
+    
+    {% for col in columns %}
+    <div class="form-group">
+        <label for="{{ col }}">{{ col }}</label>
+        <input type="text" id="{{ col }}" name="{{ col }}" value="{{ row_data[col] }}" />
+    </div>
+    {% endfor %}
+    
+    <div style="margin-top: 20px; display: flex; gap: 10px;">
+        <button type="submit" class="btn btn-primary" style="padding: 10px 20px;">Save</button>
+        <a href="/table/{{ table_name }}" class="btn" style="padding: 10px 20px; background: #95a5a6; color: white; text-decoration: none; border-radius:4px; display:inline-block;">Cancel</a>
+    </div>
+</form>
+{% endblock %}

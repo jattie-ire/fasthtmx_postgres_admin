@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - FastAPI HTMX App{% endblock %}
+
+{% block page_title %}Dashboard{% endblock %}
+
+{% block page_content %}
+{% if display_text %}
+<h3>{{ display_text }}</h3>
+{% else %}
+<h3>{{ view_name }}</h3>
+{% endif %}
+
+{% if display_description %}
+<p style="margin-top: 10px; color: #7f8c8d;">
+    {{ display_description }}
+</p>
+{% endif %}
+
+{% if data %}
+<div class="table-container">
+    <table class="table-editor">
+        <thead>
+            <tr class="table-header-row">
+                {% for column in columns %}
+                <th class="table-header-cell">{{ column }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in data %}
+            <tr class="table-data-row">
+                {% for column in columns %}
+                <td class="table-data-cell">{{ row[column] | format_datetime }}</td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="no-data-message">No data available</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Tables - FastAPI HTMX App{% endblock %}
+
+{% block page_title %}Edit Table: {{ table_name }}{% endblock %}
+
+{% block page_content %}
+<h3>Table: {{ table_name }}</h3>
+
+{% if columns %}
+<div class="table-container">
+    <table class="table-editor">
+        <thead>
+            <tr class="table-header-row">
+                {% for col in columns %}
+                <th class="table-header-cell">{{ col }}</th>
+                {% endfor %}
+                <th class="table-header-actions">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if data %}
+                {% for row in data %}
+                <form method="POST" action="/save-row">
+                    <tr class="table-data-row">
+                        <input type="hidden" name="table_name" value="{{ table_name }}">
+                        {% for col in columns %}
+                        <td class="table-data-cell">
+                            {% set col_type = col_types.get(col, 'text') %}
+                            {% if loop.first %}
+                                <strong class="table-data-cell-primary">{{ row[col] }}</strong>
+                                <input type="hidden" name="{{ col }}" value="{{ row[col] }}">
+                            {% else %}
+                                {% if col in lookups %}
+                                    {# LOOKUP FIELD - render as select with + button #}
+                                    <div style="display: flex; gap: 4px;">
+                                        <select name="{{ col }}" class="input-field">
+                                            <option value="">-- Select {{ col }} --</option>
+                                            {% for opt in lookup_options.get(col, []) %}
+                                            <option value="{{ opt }}" {% if row[col] == opt %}selected{% endif %}>{{ opt }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <button type="button" class="btn-add-lookup" data-table="{{ table_name }}" data-col="{{ col }}" data-source="{{ lookups[col] }}" title="Add new {{ col }}">+</button>
+                                    </div>
+                                {% elif col_type in ['integer', 'bigint', 'smallint'] %}
+                                    <input type="number" step="1" name="{{ col }}" value="{{ row[col] }}" class="input-field">
+                                {% elif col_type in ['numeric', 'decimal', 'double precision', 'real'] %}
+                                    <input type="number" step="any" name="{{ col }}" value="{{ row[col] }}" class="input-field">
+                                {% elif col_type in ['date'] %}
+                                    <input type="date" name="{{ col }}" value="{{ row[col] }}" class="input-field">
+                                {% elif col_type in ['timestamp', 'timestamp with time zone', 'timestamp without time zone'] %}
+                                    <input type="datetime-local" name="{{ col }}" value="{{ row[col] }}" class="input-field">
+                                {% elif col_type == 'boolean' %}
+                                    <input type="checkbox" name="{{ col }}" {% if row[col] %}checked{% endif %} class="input-checkbox">
+                                {% else %}
+                                    <input type="text" name="{{ col }}" value="{{ row[col] }}" class="input-field">
+                                {% endif %}
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                        <td class="table-actions-cell">
+                            <button type="submit" class="btn-row-save">Save</button>
+                            <button type="submit" class="btn-row-delete" formaction="/delete-row" onclick="return confirm('Delete this row?');">Delete</button>
+                        </td>
+                    </tr>
+                </form>
+                {% endfor %}
+                <!-- Add new row form -->
+                <form method="POST" action="/add-row">
+                    <tr class="add-row-form">
+                        <input type="hidden" name="table_name" value="{{ table_name }}">
+                        {% for col in columns %}
+                        <td class="add-row-cell">
+                            {% set col_type = col_types.get(col, 'text') %}
+                            {% if loop.first %}
+                                <span class="add-row-label">Auto increment</span>
+                            {% else %}
+                                {% if col in lookups %}
+                                    {# LOOKUP FIELD - render as select with + button #}
+                                    <div style="display: flex; gap: 4px;">
+                                        <select name="{{ col }}" class="input-field-add-row">
+                                            <option value="">-- Select {{ col }} --</option>
+                                            {% for opt in lookup_options.get(col, []) %}
+                                            <option value="{{ opt }}">{{ opt }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <button type="button" class="btn-add-lookup" data-table="{{ table_name }}" data-col="{{ col }}" data-source="{{ lookups[col] }}" title="Add new {{ col }}">+</button>
+                                    </div>
+                                {% elif col_type in ['integer', 'bigint', 'smallint'] %}
+                                    <input type="number" step="1" name="{{ col }}" placeholder="0" class="input-field-add-row">
+                                {% elif col_type in ['numeric', 'decimal', 'double precision', 'real'] %}
+                                    <input type="number" step="any" name="{{ col }}" placeholder="0.0" class="input-field-add-row">
+                                {% elif col_type in ['date'] %}
+                                    <input type="date" name="{{ col }}" class="input-field-add-row">
+                                {% elif col_type in ['timestamp', 'timestamp with time zone', 'timestamp without time zone'] %}
+                                    <input type="datetime-local" name="{{ col }}" class="input-field-add-row">
+                                {% elif col_type == 'boolean' %}
+                                    <input type="checkbox" name="{{ col }}" class="input-checkbox">
+                                {% else %}
+                                    <input type="text" name="{{ col }}" placeholder="Enter value" class="input-field-add-row">
+                                {% endif %}
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                        <td class="add-row-cell-actions">
+                            <button type="submit" class="btn-row-add">+ Add Row</button>
+                        </td>
+                    </tr>
+                </form>
+            {% else %}
+            <tr>
+                <td colspan="{{ columns|length + 1 }}" class="no-data-message">
+                    No data found in table
+                </td>
+            </tr>
+            <!-- Add new row form (when no data) -->
+            <form method="POST" action="/add-row">
+                <tr class="add-row-form">
+                    <input type="hidden" name="table_name" value="{{ table_name }}">
+                    {% for col in columns %}
+                    <td class="add-row-cell">
+                        {% set col_type = col_types.get(col, 'text') %}
+                        {% if loop.first %}
+                            <span class="add-row-label">Auto increment</span>
+                        {% else %}
+                            {% if col_type in ['integer', 'bigint', 'smallint'] %}
+                                <input type="number" step="1" name="{{ col }}" placeholder="0" class="input-field-add-row">
+                            {% elif col_type in ['numeric', 'decimal', 'double precision', 'real'] %}
+                                <input type="number" step="any" name="{{ col }}" placeholder="0.0" class="input-field-add-row">
+                            {% elif col_type in ['date'] %}
+                                <input type="date" name="{{ col }}" class="input-field-add-row">
+                            {% elif col_type in ['timestamp', 'timestamp with time zone', 'timestamp without time zone'] %}
+                                <input type="datetime-local" name="{{ col }}" class="input-field-add-row">
+                            {% elif col_type == 'boolean' %}
+                                <input type="checkbox" name="{{ col }}" class="input-checkbox">
+                            {% else %}
+                                <input type="text" name="{{ col }}" placeholder="Enter value" class="input-field-add-row">
+                            {% endif %}
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                    <td class="add-row-cell-actions">
+                        <button type="submit" class="btn-row-add">+ Add Row</button>
+                    </td>
+                </tr>
+            </form>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="alert alert-error">
+    Could not connect to database or table not found.
+</div>
+{% endif %}
+
+<!-- Modal for adding new lookup value -->
+<div id="lookup-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 4px; min-width: 300px;">
+        <h4>Add New Value</h4>
+        <form id="add-lookup-form" onsubmit="submitAddLookup(event)">
+            <input type="hidden" id="lookup-source-table" name="source_table">
+            <input type="hidden" id="lookup-column" name="column_name">
+            <div style="margin: 15px 0;">
+                <label for="lookup-value">Value:</label>
+                <input type="text" id="lookup-value" name="value" required style="width: 100%; padding: 8px; border: 1px solid #bdc3c7; border-radius: 3px;">
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button type="button" onclick="closeLookupModal()" style="padding: 6px 12px; border: 1px solid #bdc3c7; background: #ecf0f1; border-radius: 3px; cursor: pointer;">Cancel</button>
+                <button type="submit" style="padding: 6px 12px; background: #27ae60; color: white; border: none; border-radius: 3px; cursor: pointer;">Add</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openLookupModal(sourceTable, columnName, dataCol) {
+    document.getElementById('lookup-source-table').value = sourceTable;
+    document.getElementById('lookup-column').value = columnName;
+    document.getElementById('lookup-value').value = '';
+    document.getElementById('lookup-value').focus();
+    document.getElementById('lookup-modal').style.display = 'block';
+}
+
+function closeLookupModal() {
+    document.getElementById('lookup-modal').style.display = 'none';
+}
+
+function submitAddLookup(event) {
+    event.preventDefault();
+    
+    const sourceTable = document.getElementById('lookup-source-table').value;
+    const columnName = document.getElementById('lookup-column').value;
+    const value = document.getElementById('lookup-value').value;
+    
+    fetch('/api/add-lookup-value', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            source_table: sourceTable,
+            column_name: columnName,
+            value: value
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert('✓ Added: ' + value);
+            closeLookupModal();
+            // Reload page to refresh dropdowns
+            location.reload();
+        } else {
+            alert('✗ Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('✗ Error: ' + err));
+}
+
+// Attach click handlers to + buttons
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.btn-add-lookup').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const sourceTable = this.dataset.source.split('.')[0];
+            const columnName = this.dataset.col;
+            openLookupModal(sourceTable, columnName, columnName);
+        });
+    });
+});
+</script>
+{% endblock %}

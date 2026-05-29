@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}FastAPI HTMX App{% endblock %}</title>
+    <script src="https://unpkg.com/htmx.org"></script>
+    <link rel="stylesheet" href="/static/css/style.css">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    {% include "sidebar.html" %}
+    <div class="main-content">
+        <div class="content-header">
+            <h2>{% block page_title %}Page{% endblock %}</h2>
+            <div class="user-info">
+                Logged in as: <strong>{{ username }}@FASTHTMX.LOCAL</strong>
+            </div>
+        </div>
+        <div id="content" style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            {% block page_content %}{% endblock %}
+        </div>
+    </div>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,662 @@
+"""FastAPI Admin Dashboard - Main Application"""
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from psycopg2.extras import RealDictCursor
+from pathlib import Path
+import subprocess
+import json
+
+# Import utility modules
+from config import config, SCRIPTS_CONFIG
+from auth import kerberos_auth
+from database import (
+    get_db_connection,
+    get_available_tables,
+    get_table_columns,
+    get_column_types,
+    get_table_data,
+    get_lookup_options,
+    add_lookup_value,
+    find_source_table,
+    generate_lookups_for_table,
+)
+from templates import render_template
+
+app = FastAPI()
+
+# Mount static files
+static_dir = Path(__file__).parent / "static"
+static_dir.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+# ============================================================================
+# AUTHENTICATION ROUTES
+# ============================================================================
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root(request: Request):
+    """Home page"""
+    username = request.cookies.get("username")
+    if username:
+        return await dashboard(request)
+    
+    html = render_template("login.html", {})
+    return html
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login(request: Request, username: str = Form(...), password: str = Form(...)):
+    """Login endpoint"""
+    if kerberos_auth(username, password):
+        response = RedirectResponse(url="/dashboard", status_code=303)
+        response.set_cookie("username", username)
+        return response
+    
+    html = render_template("login.html", {"error": "Invalid credentials"})
+    return html
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    """Dashboard page - displays configured view"""
+    username = request.cookies.get("username")
+    if not username:
+        return RedirectResponse(url="/", status_code=303)
+    
+    # Get the view name from config
+    view_name = config.get("dashboard", {}).get("display_view", "")
+    data = []
+    columns = []
+    
+    if view_name:
+        # Fetch data from the view
+        conn = get_db_connection()
+        if conn:
+            try:
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                
+                # First check if view exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = %s
+                    )
+                """, (view_name,))
+                exists = cursor.fetchone()['exists']
+                
+                if not exists:
+                    # Check in all schemas
+                    cursor.execute("""
+                        SELECT table_schema, table_name FROM information_schema.tables 
+                        WHERE table_name = %s
+                        ORDER BY table_schema
+                    """, (view_name,))
+                    found = cursor.fetchall()
+                    if found:
+                        view_name = f"View found in schema: {found[0]['table_schema']}.{found[0]['table_name']} - Need to grant permissions or use full name"
+                    else:
+                        view_name = f"View '{view_name}' not found in database"
+                else:
+                    # Fetch the data
+                    query = f"SELECT * FROM {view_name}"
+                    print(f"DEBUG: Fetching dashboard view: {query}")
+                    cursor.execute(query)
+                    data = cursor.fetchall()
+                    
+                    # Get column names from cursor description or data
+                    if cursor.description:
+                        columns = [desc[0] for desc in cursor.description]
+                    elif data:
+                        columns = list(data[0].keys())
+                    
+                    print(f"Dashboard view '{view_name}': {len(data)} rows, {len(columns)} columns")
+                    print(f"DEBUG: Columns: {columns}")
+                
+                cursor.close()
+            except Exception as e:
+                print(f"ERROR fetching dashboard view '{view_name}': {e}")
+                import traceback
+                traceback.print_exc()
+                view_name = f"ERROR: {str(e)}"
+            finally:
+                conn.close()
+    
+    # Get display text from config
+    display_text = config.get("dashboard", {}).get("display_text", "")
+    display_description = config.get("dashboard", {}).get("display_description", "")
+    
+    html = render_template("dashboard.html", {
+        "username": username,
+        "page": "dashboard",
+        "available_tables": [],
+        "view_name": view_name,
+        "display_text": display_text,
+        "display_description": display_description,
+        "columns": columns,
+        "data": data
+    })
+    return html
+
+
+@app.get("/logout", response_class=HTMLResponse)
+async def logout(request: Request):
+    """Logout endpoint - clear session and redirect to login"""
+    response = RedirectResponse(url="/", status_code=303)
+    response.delete_cookie("username", path="/")
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
+@app.get("/help", response_class=HTMLResponse)
+async def help(request: Request):
+    """Help page"""
+    username = request.cookies.get("username")
+    if not username:
+        return RedirectResponse(url="/", status_code=303)
+    
+    html = render_template("help.html", {
+        "username": username,
+        "page": "help",
+        "available_tables": []
+    })
+    return html
+
+
+@app.post("/save-row")
+async def save_row(request: Request, table_name: str = Form(...)):
+    """Save edited row"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    form_data = await request.form()
+    table_name = form_data.get('table_name')
+    
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return {"error": "Database connection failed"}
+        
+        columns = get_table_columns(table_name)
+        col_types = get_column_types(table_name)
+        id_column = columns[0]
+        row_id = form_data.get(id_column)
+        
+        # Build UPDATE query
+        set_clauses = []
+        values = []
+        
+        for col in columns[1:]:  # Skip ID
+            if col in form_data or col_types.get(col) == 'boolean':
+                set_clauses.append(f"{col} = %s")
+                
+                # Handle booleans - checkbox sends 'on' if checked, nothing if unchecked
+                if col_types.get(col) == 'boolean':
+                    values.append(col in form_data and form_data.get(col) is not None)
+                else:
+                    values.append(form_data.get(col))
+        
+        if not set_clauses:
+            return {"error": "No columns to update"}
+        
+        values.append(row_id)
+        query = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE {id_column} = %s"
+        
+        cursor = conn.cursor()
+        cursor.execute(query, values)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        # Redirect back to table view
+        return RedirectResponse(url=f"/table/{table_name}", status_code=303)
+    except Exception as e:
+        print(f"ERROR saving row: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@app.post("/add-row")
+async def add_row(request: Request, table_name: str = Form(...)):
+    """Add a new row"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    form_data = await request.form()
+    table_name = form_data.get('table_name')
+    
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return {"error": "Database connection failed"}
+        
+        columns = get_table_columns(table_name)
+        col_types = get_column_types(table_name)
+        
+        # Skip the ID column (first column) - it auto-increments
+        insert_columns = columns[1:]
+        insert_values = []
+        placeholders = []
+        
+        for col in insert_columns:
+            placeholders.append("%s")
+            
+            # Handle booleans - checkbox sends 'on' if checked, nothing if unchecked
+            if col_types.get(col) == 'boolean':
+                insert_values.append(col in form_data and form_data.get(col) is not None)
+            else:
+                insert_values.append(form_data.get(col))
+        
+        query = f"INSERT INTO {table_name} ({', '.join(insert_columns)}) VALUES ({', '.join(placeholders)})"
+        
+        cursor = conn.cursor()
+        cursor.execute(query, insert_values)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        # Redirect back to table view
+        return RedirectResponse(url=f"/table/{table_name}", status_code=303)
+    except Exception as e:
+        print(f"ERROR adding row: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@app.post("/delete-row")
+async def delete_row(request: Request, table_name: str = Form(...)):
+    """Delete a row"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    form_data = await request.form()
+    table_name = form_data.get('table_name')
+    
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return {"error": "Database connection failed"}
+        
+        columns = get_table_columns(table_name)
+        id_column = columns[0]
+        row_id = form_data.get(id_column)
+        
+        query = f"DELETE FROM {table_name} WHERE {id_column} = %s"
+        
+        cursor = conn.cursor()
+        cursor.execute(query, (row_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        # Redirect back to table view
+        return RedirectResponse(url=f"/table/{table_name}", status_code=303)
+    except Exception as e:
+        print(f"ERROR deleting row: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@app.put("/api/table/{table_name}/{row_id}")
+async def api_update_row(table_name: str, row_id: str, request: Request):
+    """API endpoint to update a row in the table"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    try:
+        data = await request.json()
+        conn = get_db_connection()
+        if not conn:
+            return {"error": "Database connection failed"}
+        
+        # Get column names
+        columns = get_table_columns(table_name)
+        if not columns:
+            return {"error": "Table not found"}
+        
+        # Build UPDATE query
+        id_column = columns[0]  # Assume first column is primary key
+        set_clauses = []
+        values = []
+        
+        for col in columns[1:]:  # Skip ID column
+            if col in data:
+                set_clauses.append(f"{col} = %s")
+                values.append(data[col])
+        
+        if not set_clauses:
+            return {"error": "No columns to update"}
+        
+        values.append(row_id)  # Add ID value for WHERE clause
+        
+        query = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE {id_column} = %s"
+        
+        cursor = conn.cursor()
+        cursor.execute(query, values)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return {"success": True, "message": "Row updated"}
+    except Exception as e:
+        print(f"ERROR updating row: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@app.get("/api/tables")
+async def api_get_tables(request: Request):
+    """API endpoint to get available tables (async)"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"tables": []}
+    
+    tables = get_available_tables()
+    return {"tables": tables}
+
+
+@app.get("/table/{table_name}", response_class=HTMLResponse)
+async def get_table_data_route(table_name: str, request: Request):
+    """Get table data for editing"""
+    username = request.cookies.get("username")
+    if not username:
+        return RedirectResponse(url="/", status_code=303)
+    
+    columns = get_table_columns(table_name)
+    col_types = get_column_types(table_name)
+    data = get_table_data(table_name)
+    
+    # Get lookup configuration for this table
+    lookups_config = config.get("lookups", {})
+    lookup_cols = lookups_config.get(table_name, [])
+    
+    # Build lookups dict for template (col -> table.col)
+    lookups = {col: f"{table_name}.{col}" for col in lookup_cols}
+    
+    # Pre-fetch all lookup options
+    lookup_options = {}
+    for col in lookup_cols:
+        source_def = lookups[col]  # Format: "table.column"
+        options = get_lookup_options(source_def, col)
+        lookup_options[col] = options
+    
+    html = render_template("table.html", {
+        "columns": columns,
+        "col_types": col_types,
+        "data": data,
+        "table_name": table_name,
+        "username": username,
+        "page": "table",
+        "available_tables": [],
+        "lookups": lookups,
+        "lookup_options": lookup_options
+    })
+    return html
+
+
+# ============================================================================
+# LOOKUP API ENDPOINTS
+# ============================================================================
+
+@app.get("/api/lookup-options/{source_table}/{column_name}")
+async def api_get_lookup_options(source_table: str, column_name: str, request: Request):
+    """Get dropdown options for a lookup field"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    try:
+        # Format: "i07_gsm.gsm_name"
+        lookup_key = f"{source_table}.{column_name}"
+        options = get_lookup_options(lookup_key, column_name)
+        return {"options": options}
+    except Exception as e:
+        print(f"ERROR fetching lookup options: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@app.post("/api/add-lookup-value")
+async def api_add_lookup_value(request: Request):
+    """Add a new value to a lookup source table"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    try:
+        data = await request.json()
+        source_table = data.get("source_table")  # e.g., "i07_gsm"
+        column_name = data.get("column_name")    # e.g., "gsm_name"
+        value = data.get("value")                 # e.g., "gsm_new"
+        
+        if not all([source_table, column_name, value]):
+            return {"error": "Missing required fields: source_table, column_name, value"}
+        
+        # Format: "table.column"
+        lookup_key = f"{source_table}.{column_name}"
+        success = add_lookup_value(lookup_key, column_name, value)
+        
+        if success:
+            return {"success": True, "message": f"Added {value} to {lookup_key}"}
+        else:
+            return {"error": "Failed to add lookup value"}
+    except Exception as e:
+        print(f"ERROR adding lookup value: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
+@app.get("/api/field-lookups/{table_name}")
+async def api_get_field_lookups(table_name: str, request: Request):
+    """Get lookup configuration for a table"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    try:
+        # Get lookups from config for this table
+        lookups_config = config.get("lookups", {})
+        lookup_cols = lookups_config.get(table_name, [])
+        lookups = {col: f"{table_name}.{col}" for col in lookup_cols}
+        return {"lookups": lookups}
+    except Exception as e:
+        print(f"ERROR fetching field lookups: {e}")
+        return {"error": str(e)}
+
+
+@app.post("/api/generate-lookups/{table_name}")
+async def api_generate_lookups(table_name: str, request: Request):
+    """Generate lookups for a table by scanning TEXT columns"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    try:
+        # Generate lookups
+        lookups = generate_lookups_for_table(table_name)
+        
+        if not lookups:
+            return {"success": False, "message": f"No TEXT columns found in {table_name}"}
+        
+        # Update config[lookups]
+        if "lookups" not in config:
+            config["lookups"] = {}
+        
+        # Add or update table in lookups
+        existing = config["lookups"].get(table_name, [])
+        new_cols = [col for col in lookups.keys() if col not in existing]
+        
+        if not new_cols:
+            return {"success": False, "message": f"All columns already in config for {table_name}"}
+        
+        config["lookups"][table_name] = list(lookups.keys())
+        
+        # Write config back to file
+        from pathlib import Path
+        config_path = Path(__file__).parent / "config.toml"
+        with open(config_path, 'w') as f:
+            # Write sections in order
+            for section in ['database', 'tables', 'dashboard', 'lookups']:
+                if section in config:
+                    f.write(f"[{section}]\n")
+                    section_data = config[section]
+                    
+                    if section == 'lookups':
+                        # Format: table = ["col1", "col2"]
+                        for tbl, cols in sorted(section_data.items()):
+                            cols_str = ', '.join(f'"{col}"' for col in cols)
+                            f.write(f'{tbl} = [{cols_str}]\n')
+                    else:
+                        for key, value in section_data.items():
+                            if isinstance(value, list):
+                                if all(isinstance(v, str) for v in value):
+                                    items = ', '.join(f'"{v}"' for v in value)
+                                    f.write(f'{key} = [{items}]\n')
+                                else:
+                                    f.write(f'{key} = {value}\n')
+                            elif isinstance(value, str):
+                                f.write(f'{key} = "{value}"\n')
+                            else:
+                                f.write(f'{key} = {value}\n')
+                    f.write('\n')
+        
+        return {
+            "success": True,
+            "message": f"Generated lookups for {table_name}",
+            "added_columns": new_cols,
+            "all_lookups": list(lookups.keys())
+        }
+    except Exception as e:
+        print(f"ERROR generating lookups: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================================
+# SHELL SCRIPT EXECUTION ENDPOINTS
+# ============================================================================
+
+@app.get("/api/scripts")
+async def api_get_scripts(request: Request):
+    """Get list of available shell scripts"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    try:
+        scripts_list = [
+            {"name": script_name, "path": script_path}
+            for script_name, script_path in SCRIPTS_CONFIG.items()
+        ]
+        return {"scripts": scripts_list}
+    except Exception as e:
+        print(f"ERROR fetching scripts: {e}")
+        return {"error": str(e)}
+
+
+def execute_script_internal(script_name: str):
+    """Internal function to execute a script and return result dict"""
+    import time
+    start_time = time.time()
+    
+    try:
+        # Verify script exists in config
+        if script_name not in SCRIPTS_CONFIG:
+            return {"error": f"Script '{script_name}' not found in configuration", "success": False}
+        
+        script_path = SCRIPTS_CONFIG[script_name]
+        
+        # Resolve path relative to app.py location
+        app_dir = Path(__file__).parent
+        full_script_path = (app_dir / script_path).resolve()
+        
+        # Security check: ensure script path exists and is readable
+        if not full_script_path.exists():
+            return {"error": f"Script file not found: {full_script_path}", "success": False}
+        
+        if not full_script_path.is_file():
+            return {"error": f"Script path is not a file: {full_script_path}", "success": False}
+        
+        # Execute the script
+        print(f"Executing script: {full_script_path}")
+        result = subprocess.run(
+            [str(full_script_path)],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+        
+        elapsed_time = time.time() - start_time
+        
+        return {
+            "success": result.returncode == 0,
+            "script_name": script_name,
+            "return_code": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "execution_time": elapsed_time,
+        }
+    except subprocess.TimeoutExpired:
+        elapsed_time = time.time() - start_time
+        return {"error": "Script execution timed out after 5 minutes", "success": False, "execution_time": elapsed_time}
+    except Exception as e:
+        elapsed_time = time.time() - start_time
+        print(f"ERROR executing script: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e), "success": False, "execution_time": elapsed_time}
+
+
+@app.get("/execute-script/{script_name}", response_class=HTMLResponse)
+async def execute_script(script_name: str, request: Request):
+    """Execute a predefined shell script and show results page"""
+    username = request.cookies.get("username")
+    if not username:
+        return RedirectResponse(url="/", status_code=303)
+    
+    result = execute_script_internal(script_name)
+    
+    html = render_template("script_results.html", {
+        "username": username,
+        "success": result.get("success", False),
+        "script_name": result.get("script_name", script_name),
+        "return_code": result.get("return_code", ""),
+        "stdout": result.get("stdout", ""),
+        "stderr": result.get("stderr", ""),
+        "error": result.get("error", ""),
+        "execution_time": result.get("execution_time", 0),
+    })
+    return html
+
+
+@app.post("/api/execute-script/{script_name}")
+async def api_execute_script(script_name: str, request: Request):
+    """API endpoint to execute a script (JSON response)"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    result = execute_script_internal(script_name)
+    result["message"] = "Script executed successfully" if result.get("success") else "Script completed with errors"
+    return result
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

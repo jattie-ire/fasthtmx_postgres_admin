@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block title %}Help - FastAPI HTMX App{% endblock %}
+
+{% block page_title %}Help{% endblock %}
+
+{% block page_content %}
+<h3>Getting Started</h3>
+<p style="margin-top: 10px; color: #7f8c8d;">
+    Welcome to the FastAPI HTMX Application help page. Here you'll find useful information about using this application.
+</p>
+
+<h4 style="margin-top: 25px; color: #2c3e50;">Navigation</h4>
+<ul style="margin-left: 20px; margin-top: 10px; color: #7f8c8d;">
+    <li><strong>Dashboard:</strong> View your main dashboard and welcome screen</li>
+    <li><strong>Edit Tables:</strong> Access and manage database records from the Test table</li>
+    <li><strong>Logout:</strong> Sign out of your current session</li>
+</ul>
+
+<h4 style="margin-top: 25px; color: #2c3e50;">Database Management</h4>
+<p style="margin-top: 10px; color: #7f8c8d;">
+    Use the "Edit Tables" option in the Database section to view and manage your data. The application connects to a PostgreSQL database with Kerberos authentication.
+</p>
+
+<h4 style="margin-top: 25px; color: #2c3e50;">Need More Help?</h4>
+<p style="margin-top: 10px; color: #7f8c8d;">
+    If you encounter any issues, please contact your system administrator.
+</p>
+{% endblock %}

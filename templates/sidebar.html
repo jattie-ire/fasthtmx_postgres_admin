@@ -1,0 +1,170 @@
+<div class="sidebar">
+    <h1>FastAPI HTMX</h1>
+    
+    <div class="sidebar-section">
+        <h3>Navigation</h3>
+        <ul class="sidebar-menu">
+            <li><a href="/dashboard" {% if page == 'dashboard' %}class="active"{% endif %}>Dashboard</a></li>
+            <li><a href="/help" {% if page == 'help' %}class="active"{% endif %}>Help</a></li>
+        </ul>
+    </div>
+    
+    <div class="sidebar-section">
+        <h3>Edit Tables</h3>
+        <div style="display: flex; gap: 8px; flex-direction: column;">
+            <select id="table-select" style="padding: 8px; border-radius: 4px; border: 1px solid #bdc3c7; background: white; color: #2c3e50; font-size: 14px;">
+                <option value="">Loading tables...</option>
+            </select>
+            <button onclick="openTable()" class="btn btn-primary" style="font-size: 14px; padding: 8px 12px;">Open Table</button>
+        </div>
+    </div>
+    
+    <div class="sidebar-section">
+        <h3>Run Scripts</h3>
+        <div style="display: flex; gap: 8px; flex-direction: column;">
+            <select id="script-select" style="padding: 8px; border-radius: 4px; border: 1px solid #bdc3c7; background: white; color: #2c3e50; font-size: 14px;">
+                <option value="">Loading scripts...</option>
+            </select>
+            <button onclick="executeScript()" class="btn btn-primary" style="font-size: 14px; padding: 8px 12px;">Execute Script</button>
+        </div>
+    </div>
+    
+    <div class="sidebar-section" style="margin-top: 50px; border-top: 1px solid #34495e; padding-top: 20px;">
+        <h3>Account</h3>
+        <ul class="sidebar-menu">
+            <li><a href="/logout" class="btn btn-danger" style="padding: 8px 12px; margin: 0;">Logout</a></li>
+        </ul>
+    </div>
+</div>
+
+<script>
+// Load available tables on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Clear any pending script execution timeout
+    if (window.scriptExecutionTimeout) {
+        clearTimeout(window.scriptExecutionTimeout);
+        window.scriptExecutionTimeout = null;
+    }
+    
+    fetch('/api/tables')
+        .then(response => response.json())
+        .then(data => {
+            const tableSelect = document.getElementById('table-select');
+            tableSelect.innerHTML = '<option value="">-- Select Table --</option>';
+            data.tables.forEach(table => {
+                const option = document.createElement('option');
+                option.value = table;
+                option.textContent = table;
+                // Select the first table by default
+                if (data.tables.length > 0 && table === data.tables[0]) {
+                    option.selected = true;
+                }
+                tableSelect.appendChild(option);
+            });
+        })
+        .catch(err => {
+            console.error('Failed to load tables:', err);
+            document.getElementById('table-select').innerHTML = '<option value="">Error loading tables</option>';
+        });
+    
+    // Load available scripts
+    fetch('/api/scripts')
+        .then(response => response.json())
+        .then(data => {
+            const scriptSelect = document.getElementById('script-select');
+            scriptSelect.innerHTML = '<option value="">-- Select Script --</option>';
+            if (data.scripts && data.scripts.length > 0) {
+                data.scripts.forEach(script => {
+                    const option = document.createElement('option');
+                    option.value = script.name;
+                    option.textContent = script.name;
+                    scriptSelect.appendChild(option);
+                });
+            } else {
+                scriptSelect.innerHTML = '<option value="">No scripts available</option>';
+            }
+        })
+        .catch(err => {
+            console.error('Failed to load scripts:', err);
+            document.getElementById('script-select').innerHTML = '<option value="">Error loading scripts</option>';
+        });
+});
+
+function openTable() {
+    const tableSelect = document.getElementById('table-select');
+    const tableName = tableSelect.value;
+    if (tableName) {
+        // Full page navigation instead of partial fetch
+        window.location.href = `/table/${tableName}`;
+    }
+}
+
+function executeScript() {
+    const scriptSelect = document.getElementById('script-select');
+    const scriptName = scriptSelect.value;
+    
+    if (!scriptName) {
+        alert('Please select a script to execute');
+        return;
+    }
+    
+    // Disable all navigation elements
+    const tableSelect = document.getElementById('table-select');
+    const openTableBtn = document.querySelector('button.btn-primary');
+    const navLinks = document.querySelectorAll('.sidebar-menu a');
+    
+    tableSelect.disabled = true;
+    tableSelect.style.opacity = '0.6';
+    scriptSelect.disabled = true;
+    scriptSelect.style.opacity = '0.6';
+    openTableBtn.disabled = true;
+    openTableBtn.style.opacity = '0.6';
+    openTableBtn.style.cursor = 'not-allowed';
+    
+    // Disable navigation links
+    navLinks.forEach(link => {
+        link.style.pointerEvents = 'none';
+        link.style.opacity = '0.6';
+        link.style.cursor = 'not-allowed';
+    });
+    
+    const button = event.target;
+    button.disabled = true;
+    button.style.opacity = '0.6';
+    button.style.cursor = 'not-allowed';
+    button.textContent = 'Executing...';
+    
+    // Add a loading message
+    const loadingMsg = document.createElement('div');
+    loadingMsg.id = 'execution-loading';
+    loadingMsg.style.cssText = 'color: #3498db; font-size: 12px; margin-top: 8px;';
+    loadingMsg.textContent = 'Running script, please wait...';
+    button.parentElement.appendChild(loadingMsg);
+    
+    // Set a timeout in case script takes too long (5 minutes = 300000 ms)
+    const timeoutId = setTimeout(() => {
+        alert('Script execution timed out after 5 minutes. Please check the server logs.');
+        // Re-enable controls
+        tableSelect.disabled = false;
+        tableSelect.style.opacity = '1';
+        scriptSelect.disabled = false;
+        scriptSelect.style.opacity = '1';
+        openTableBtn.disabled = false;
+        openTableBtn.style.opacity = '1';
+        button.disabled = false;
+        button.style.opacity = '1';
+        button.textContent = 'Execute Script';
+        navLinks.forEach(link => {
+            link.style.pointerEvents = 'auto';
+            link.style.opacity = '1';
+        });
+        if (loadingMsg) loadingMsg.remove();
+    }, 300000); // 5 minutes
+    
+    // Store timeout ID to clear if navigation succeeds
+    window.scriptExecutionTimeout = timeoutId;
+    
+    // Navigate to results page
+    window.location.href = `/execute-script/${scriptName}`;
+}
+</script>

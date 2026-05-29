@@ -1,0 +1,22 @@
+[database]
+host = "your-postgres-host"
+database = "your_database_name"
+user = "your_db_user"
+password = "your_db_password"
+
+[tables]
+include = ["table_prefix_.*"]
+exclude = [".*_temp.*", ".*_archive.*"]
+
+[dashboard]
+display_view = "your_view_name"
+display_text = "Dashboard Title"
+display_description = "Description of what this dashboard shows"
+
+[lookups]
+table_name = ["column1", "column2"]
+another_table = ["lookup_column"]
+
+[scripts]
+script_name_1 = "/path/to/script.sh"
+script_name_2 = "/path/to/another_script.sh"
