@@ -138,7 +138,12 @@ def get_table_data(table_name: str):
     
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        query = f"SELECT * FROM {table_name}"
+        # Get column names to sort by first column (usually the primary key)
+        cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = %s ORDER BY ordinal_position LIMIT 1", (table_name,))
+        first_col_result = cursor.fetchone()
+        first_col = first_col_result['column_name'] if first_col_result else 'id'
+        
+        query = f"SELECT * FROM {table_name} ORDER BY {first_col}"
         print(f"DEBUG: Executing query: {query}")
         cursor.execute(query)
         data = cursor.fetchall()
@@ -206,8 +211,9 @@ def get_lookup_options(source_table: str, column_name: str) -> list:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         table, col = source_table.split('.')
         
-        # Get distinct values, ordered
-        query = f"SELECT DISTINCT {col} FROM {table} ORDER BY {col}"
+        # Get distinct values, ordered case-insensitively using subquery
+        # PostgreSQL doesn't allow ORDER BY expressions not in SELECT with DISTINCT
+        query = f"SELECT {col} FROM (SELECT DISTINCT {col} FROM {table}) sub ORDER BY LOWER({col}), {col}"
         print(f"DEBUG: Lookup query: {query}")
         cursor.execute(query)
         results = cursor.fetchall()

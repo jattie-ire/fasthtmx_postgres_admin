@@ -8,7 +8,7 @@ import subprocess
 import json
 
 # Import utility modules
-from config import config, SCRIPTS_CONFIG
+from config import config, SCRIPTS_CONFIG, TABLE_PERMISSIONS, get_table_permissions
 from auth import kerberos_auth
 from database import (
     get_db_connection,
@@ -29,6 +29,44 @@ app = FastAPI()
 static_dir = Path(__file__).parent / "static"
 static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+# ============================================================================
+# STARTUP VALIDATION
+# ============================================================================
+
+def validate_table_permissions():
+    """Validate that all columns in table_permissions exist"""
+    if not TABLE_PERMISSIONS:
+        return
+    
+    print("Validating table permissions...")
+    for table_name, perms in TABLE_PERMISSIONS.items():
+        editable_cols = perms.get("editable_columns", [])
+        if not editable_cols:
+            continue
+        
+        try:
+            actual_columns = get_table_columns(table_name)
+            if not actual_columns:
+                raise ValueError(f"Table '{table_name}' not found in database")
+            
+            for col in editable_cols:
+                if col not in actual_columns:
+                    raise ValueError(f"Column '{col}' not found in table '{table_name}'. Available columns: {actual_columns}")
+            
+            print(f"✓ Table '{table_name}': permissions valid")
+        except Exception as e:
+            print(f"✗ ERROR validating table '{table_name}': {e}")
+            raise
+
+
+# Validate on startup
+try:
+    validate_table_permissions()
+except Exception as e:
+    print(f"FATAL: Table permissions validation failed: {e}")
+    exit(1)
 
 
 # ============================================================================
@@ -179,6 +217,10 @@ async def save_row(request: Request, table_name: str = Form(...)):
     table_name = form_data.get('table_name')
     
     try:
+        # Check permissions
+        perms = get_table_permissions(table_name)
+        editable_columns = set(perms["editable_columns"])
+        
         conn = get_db_connection()
         if not conn:
             return {"error": "Database connection failed"}
@@ -188,11 +230,14 @@ async def save_row(request: Request, table_name: str = Form(...)):
         id_column = columns[0]
         row_id = form_data.get(id_column)
         
-        # Build UPDATE query
+        # Build UPDATE query - only include editable columns
         set_clauses = []
         values = []
         
         for col in columns[1:]:  # Skip ID
+            if col not in editable_columns:
+                continue  # Skip non-editable columns
+            
             if col in form_data or col_types.get(col) == 'boolean':
                 set_clauses.append(f"{col} = %s")
                 
@@ -203,7 +248,7 @@ async def save_row(request: Request, table_name: str = Form(...)):
                     values.append(form_data.get(col))
         
         if not set_clauses:
-            return {"error": "No columns to update"}
+            return {"error": "No editable columns to update"}
         
         values.append(row_id)
         query = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE {id_column} = %s"
@@ -234,6 +279,11 @@ async def add_row(request: Request, table_name: str = Form(...)):
     table_name = form_data.get('table_name')
     
     try:
+        # Check permissions
+        perms = get_table_permissions(table_name)
+        if not perms["allow_add"]:
+            return {"error": "Adding rows to this table is not allowed"}
+        
         conn = get_db_connection()
         if not conn:
             return {"error": "Database connection failed"}
@@ -247,6 +297,7 @@ async def add_row(request: Request, table_name: str = Form(...)):
         placeholders = []
         
         for col in insert_columns:
+            # When adding rows, accept all columns (not just editable_columns)
             placeholders.append("%s")
             
             # Handle booleans - checkbox sends 'on' if checked, nothing if unchecked
@@ -254,6 +305,9 @@ async def add_row(request: Request, table_name: str = Form(...)):
                 insert_values.append(col in form_data and form_data.get(col) is not None)
             else:
                 insert_values.append(form_data.get(col))
+        
+        if not placeholders:
+            return {"error": "No columns to insert"}
         
         query = f"INSERT INTO {table_name} ({', '.join(insert_columns)}) VALUES ({', '.join(placeholders)})"
         
@@ -283,6 +337,11 @@ async def delete_row(request: Request, table_name: str = Form(...)):
     table_name = form_data.get('table_name')
     
     try:
+        # Check permissions
+        perms = get_table_permissions(table_name)
+        if not perms["allow_delete"]:
+            return {"error": "Deleting rows from this table is not allowed"}
+        
         conn = get_db_connection()
         if not conn:
             return {"error": "Database connection failed"}
@@ -379,6 +438,9 @@ async def get_table_data_route(table_name: str, request: Request):
     col_types = get_column_types(table_name)
     data = get_table_data(table_name)
     
+    # Get table permissions
+    perms = get_table_permissions(table_name)
+    
     # Get lookup configuration for this table
     lookups_config = config.get("lookups", {})
     lookup_cols = lookups_config.get(table_name, [])
@@ -402,7 +464,10 @@ async def get_table_data_route(table_name: str, request: Request):
         "page": "table",
         "available_tables": [],
         "lookups": lookups,
-        "lookup_options": lookup_options
+        "lookup_options": lookup_options,
+        "allow_add": perms["allow_add"],
+        "allow_delete": perms["allow_delete"],
+        "editable_columns": perms["editable_columns"]
     })
     return html
 
