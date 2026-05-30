@@ -2,6 +2,38 @@
 
 A FastAPI + HTMX application with Kerberos authentication for secure database and configuration management.
 
+## Why HCF Admin?
+
+Managing PostgreSQL databases in enterprise environments is complex. You need **secure authentication**, **granular permissions**, **audit trails**, and the ability to let teams access data without exposing database credentials or SQL knowledge. Most solutions either require expensive enterprise tools, extensive custom development, or expose your database to risky third-party platforms.
+
+**HCF Admin solves this problem** with a lightweight, self-hosted web application that:
+
+- **Integrates with your Kerberos infrastructure** → Authentication happens through your existing corporate directory (no new user databases)
+- **Provides instant database administration** → Browse, edit, and manage PostgreSQL tables without writing SQL
+- **Maintains performance at scale** → Connection pooling, caching, and pagination keep the app responsive even with millions of rows
+- **Gives granular control** → Admins can restrict exactly which tables, columns, and operations each user can perform
+- **Runs scripts safely** → Execute maintenance scripts with full output capture and timeout protection
+- **Hot-reloads configuration** → Change permissions and settings without restarting the application
+- **Ships with deployment tools** → CLI utilities validate your setup, discover tables, and auto-generate configuration
+
+### Who Should Use This?
+
+- **System Administrators** who need to manage PostgreSQL databases for business users
+- **DevOps Teams** looking for a self-hosted alternative to commercial database tools
+- **Enterprises** with Kerberos/Active Directory infrastructure and strong security requirements
+- **Organizations** wanting to democratize database access while maintaining control and audit trails
+
+### What You Get
+
+✅ Web UI for database browsing and editing  
+✅ Permission-based access control (6-level user flags + column-level restrictions)  
+✅ Integrated shell script execution with live output  
+✅ Configuration management with live editor and hot-reload  
+✅ Dark/light theme support for comfortable use  
+✅ Deployment tools (connectivity checker, table discovery, config validator, auto-config generator)  
+✅ Complete documentation with Kerberos setup guides and deployment examples  
+✅ Production-ready with connection pooling, pagination, and caching  
+
 ## Features
 
 - **Kerberos Authentication**: Secure login using kinit with username/password validation
@@ -289,12 +321,16 @@ The dashboard provides access to all application features:
 - **Theme Toggle**: Switch between light and dark modes
 - **Logout**: End your session
 
+![HCF Admin Dashboard - Script Execution Results](images/dashboard.png)
+
 ### Tables
 
 - **Browsing**: View paginated table data with size selections (25-500 rows)
 - **Editing**: Click row values to edit (if permissions allow)
 - **Sorting**: Column-based sorting
 - **Search/Filter**: Quick row filtering via table search
+
+![Table Editor - View and Edit Data with Pagination](images/table-view.png)
 
 ### Admin Panel
 
@@ -305,6 +341,8 @@ Accessible only to users with admin privileges:
 - **Table Permissions**: Control which tables are visible and editable per user
 - **Scripts**: Manage available scripts
 - **Lookups**: Configure reference data
+
+![Admin Panel - Configuration Editor with Live Validation](images/admin-panel.png)
 
 ### Running Scripts
 
