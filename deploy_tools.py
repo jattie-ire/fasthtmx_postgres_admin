@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HCF Admin Deployment Tools
+FastHTMX Admin Deployment Tools
 
 CLI utilities for managing database connections, configuration validation,
 and table discovery during deployment. Use this before deploying to production.
@@ -470,7 +470,7 @@ def main():
     
     parser = argparse.ArgumentParser(
         prog="deploy_tools.py",
-        description="HCF Admin Deployment Tools - Validate and configure before deployment",
+        description="FastHTMX Admin Deployment Tools - Validate and configure before deployment",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

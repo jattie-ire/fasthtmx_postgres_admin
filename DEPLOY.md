@@ -1,8 +1,8 @@
-# Deployment Guide for HCF Admin
+# Deployment Guide for FastHTMX Admin
 
 ## Overview
 
-HCF Admin includes deployment tools to make it easier to validate configurations, test database connections, and discover tables before deploying to production.
+FastHTMX Admin includes deployment tools to make it easier to validate configurations, test database connections, and discover tables before deploying to production.
 
 **Location:** `deploy_tools.py`
 
@@ -102,7 +102,7 @@ python deploy_tools.py validate-config
   Validating Configuration (config.toml)
 ======================================================================
 
-Loading config from: /home/jattie/hcf_admin/config.toml
+Loading config from: /home/jattie/fasthtmx-admin/config.toml
 ✓ TOML syntax is valid
 ✓ Section [database] exists
 ✓ Section [app] exists
@@ -365,7 +365,7 @@ python deploy_tools.py generate-config --help
 **Possible causes:**
 1. Table name is misspelled in `config.toml`
 2. Table was deleted from database
-3. Table exists in a different schema (HCF Admin only sees `public` schema)
+3. Table exists in a different schema (FastHTMX Admin only sees `public` schema)
 
 **Fix:**
 - Update `config.toml` with correct table name, OR

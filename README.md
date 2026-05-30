@@ -1,12 +1,12 @@
-# HCF Admin - FastAPI PostgreSQL Management Interface
+# FastHTMX Admin - FastAPI PostgreSQL Management Interface
 
 A FastAPI + HTMX application with Kerberos authentication for secure database and configuration management.
 
-## Why HCF Admin?
+## Why FastHTMX Admin?
 
 Managing PostgreSQL databases in enterprise environments is complex. You need **secure authentication**, **granular permissions**, **audit trails**, and the ability to let teams access data without exposing database credentials or SQL knowledge. Most solutions either require expensive enterprise tools, extensive custom development, or expose your database to risky third-party platforms.
 
-**HCF Admin solves this problem** with a lightweight, self-hosted web application that:
+**FastHTMX Admin solves this problem** with a lightweight, self-hosted web application that:
 
 - **Integrates with your Kerberos infrastructure** → Authentication happens through your existing corporate directory (no new user databases)
 - **Provides instant database administration** → Browse, edit, and manage PostgreSQL tables without writing SQL
@@ -295,7 +295,7 @@ kadmin.local
 For production deployments:
 
 1. Use your organization's existing Kerberos infrastructure
-2. Create application-specific service principal: `hcfadmin/hostname@REALM`
+3. Create application-specific service principal: `fasthtmxadmin/hostname@REALM`
 3. Configure krb5.conf to point to your KDC
 4. Update `krb5.conf` realm to match your environment
 5. Test thoroughly in staging environment before production rollout
@@ -321,7 +321,7 @@ The dashboard provides access to all application features:
 - **Theme Toggle**: Switch between light and dark modes
 - **Logout**: End your session
 
-![HCF Admin Dashboard - Script Execution Results](images/dashboard.png)
+![FastHTMX Admin Dashboard - Script Execution Results](images/dashboard.png)
 
 ### Tables
 
@@ -512,7 +512,7 @@ DB_CONFIG = {
 Set up Nginx as a reverse proxy in front of the application:
 
 ```nginx
-upstream hcf_admin {
+upstream fasthtmx_admin {
     server localhost:8000;
     server localhost:8001;
     server localhost:8002;
@@ -540,7 +540,7 @@ server {
     add_header X-Frame-Options "SAMEORIGIN" always;
 
     location / {
-        proxy_pass http://hcf_admin;
+        proxy_pass http://fasthtmx_admin;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -559,19 +559,19 @@ server {
 Create a systemd service to manage the application:
 
 ```ini
-# /etc/systemd/system/hcf-admin.service
+# /etc/systemd/system/fasthtmx-admin.service
 
 [Unit]
-Description=HCF Admin Application
+Description=FastHTMX Admin Application
 After=network.target postgresql.service krb5-kdc.service
 
 [Service]
 Type=notify
-User=hcf-admin
-WorkingDirectory=/opt/hcf-admin
-Environment="PATH=/opt/hcf-admin/venv/bin"
-EnvironmentFile=/etc/hcf-admin/.env
-ExecStart=/opt/hcf-admin/venv/bin/gunicorn \
+User=fasthtmx-admin
+WorkingDirectory=/opt/fasthtmx-admin
+Environment="PATH=/opt/fasthtmx-admin/venv/bin"
+EnvironmentFile=/etc/fasthtmx-admin/.env
+ExecStart=/opt/fasthtmx-admin/venv/bin/gunicorn \
     -w 4 \
     -k uvicorn.workers.UvicornWorker \
     -b 127.0.0.1:8000 \
@@ -586,9 +586,9 @@ WantedBy=multi-user.target
 Enable and start the service:
 
 ```bash
-sudo systemctl enable hcf-admin
-sudo systemctl start hcf-admin
-sudo systemctl status hcf-admin
+sudo systemctl enable fasthtmx-admin
+sudo systemctl start fasthtmx-admin
+sudo systemctl status fasthtmx-admin
 ```
 
 #### 5. Docker Deployment
@@ -625,13 +625,13 @@ CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.
 Build and run:
 
 ```bash
-docker build -t hcf-admin:latest .
+docker build -t fasthtmx-admin:latest .
 docker run -d \
     -p 8000:8000 \
     -e DATABASE_URL="postgresql://user:pass@postgres:5432/mydb" \
     -e KERBEROS_REALM="EXAMPLE.COM" \
     -v /etc/krb5.conf:/etc/krb5.conf \
-    hcf-admin:latest
+    fasthtmx-admin:latest
 ```
 
 #### 6. Docker Compose
@@ -645,28 +645,30 @@ services:
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: hcf_user
+      POSTGRES_USER: fasthtmx_user
       POSTGRES_PASSWORD: secure_password
-      POSTGRES_DB: hcf_db
+      POSTGRES_DB: fasthtmx_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
 
-  hcf-admin:
+  fasthtmx-admin:
     build: .
     ports:
       - "8000:8000"
     environment:
       DB_HOST: postgres
-      DB_USER: hcf_user
+      DB_USER: fasthtmx_user
       DB_PASSWORD: secure_password
-      DB_NAME: hcf_db
+      DB_NAME: fasthtmx_db
     depends_on:
       - postgres
     volumes:
       - ./config.toml:/app/config.toml
       - /etc/krb5.conf:/etc/krb5.conf
+    depends_on:
+      - postgres
 
   nginx:
     image: nginx:alpine
@@ -677,7 +679,7 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf
       - ./certs:/etc/nginx/certs
     depends_on:
-      - hcf-admin
+      - fasthtmx-admin
 ```
 
 Run with:
@@ -735,13 +737,13 @@ For detailed deployment instructions, see [DEPLOY.md](DEPLOY.md).
 5. **Database Backups**: Automate with cron jobs
    ```bash
    # Daily backup
-   0 2 * * * /usr/bin/pg_dump -h localhost -U hcf_user hcf_db | gzip > /backups/hcf_db_$(date +\%Y\%m\%d).sql.gz
+   0 2 * * * /usr/bin/pg_dump -h localhost -U fasthtmx_user fasthtmx_db | gzip > /backups/fasthtmx_db_$(date +\%Y\%m\%d).sql.gz
    ```
 
 6. **Logging**: Configure application logs
    ```python
    import logging
-   logging.basicConfig(filename="/var/log/hcf-admin/app.log", level=logging.INFO)
+   logging.basicConfig(filename="/var/log/fasthtmx-admin/app.log", level=logging.INFO)
    ```
 
 7. **Kerberos Configuration**: Point to your organization's KDC
@@ -757,7 +759,7 @@ For detailed deployment instructions, see [DEPLOY.md](DEPLOY.md).
 
 8. **Health Checks**: Monitor application availability
    ```bash
-   curl -f http://localhost:8000/health || systemctl restart hcf-admin
+   curl -f http://localhost:8000/health || systemctl restart fasthtmx-admin
    ```
 
 9. **Resource Limits**: Set appropriate limits for the service
@@ -786,7 +788,7 @@ user = "myuser"
 password = "mypassword"
 
 [app]
-app_name = "HCF Admin"
+app_name = "FastHTMX Admin"
 version = "1.0.0"
 
 [table_permissions]
