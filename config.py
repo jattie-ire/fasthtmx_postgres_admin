@@ -2,13 +2,47 @@
 import tomllib
 from pathlib import Path
 
-# Load configuration from TOML file
-config_path = Path(__file__).parent / "config.toml"
-with open(config_path, "rb") as f:
-    config = tomllib.load(f)
+# ============================================================================
+# CONFIG CACHING
+# ============================================================================
+
+_config_path = Path(__file__).parent / "config.toml"
+_cached_config = None
+
+def load_config():
+    """Load configuration from TOML file (cached)"""
+    global _cached_config
+    if _cached_config is None:
+        reload_config()
+    return _cached_config
+
+
+def reload_config():
+    """Reload configuration from disk (bypasses cache)"""
+    global _cached_config
+    try:
+        with open(_config_path, "rb") as f:
+            _cached_config = tomllib.load(f)
+        print("✓ Configuration reloaded from disk")
+    except Exception as e:
+        print(f"ERROR loading config: {e}")
+        import traceback
+        traceback.print_exc()
+        _cached_config = {}
+    return _cached_config
+
+
+# Load config on module import
+config = load_config()
 
 # Database config from TOML
 DB_CONFIG = config.get("database", {})
+
+# App config from TOML
+APP_CONFIG = config.get("app", {})
+
+# User management table name
+FASTAPI_USERS_TABLE = APP_CONFIG.get("fastapi_users_table", "fastapi_users")
 
 # Scripts config from TOML
 SCRIPTS_CONFIG = config.get("scripts", {})
@@ -49,4 +83,76 @@ def can_add_rows(table_name: str) -> bool:
 def can_delete_rows(table_name: str) -> bool:
     """Check if rows can be deleted from this table"""
     return get_table_permissions(table_name)["allow_delete"]
+
+
+# User permission helper functions (checked against fastapi_users table)
+def get_user_permission_level(user_perms: dict, action: str) -> bool:
+    """
+    Check if user has permission for an action.
+    
+    Args:
+        user_perms: Dict from database with keys: view, edit, add, delete, admin
+        action: One of 'view', 'edit', 'add', 'delete', 'admin'
+    
+    Returns:
+        Boolean permission status
+    """
+    return user_perms.get(action, False)
+
+
+def can_user_view(user_perms: dict) -> bool:
+    """Check if user has view permission"""
+    return get_user_permission_level(user_perms, 'view')
+
+
+def can_user_edit(user_perms: dict) -> bool:
+    """Check if user has edit permission"""
+    return get_user_permission_level(user_perms, 'edit')
+
+
+def can_user_add(user_perms: dict) -> bool:
+    """Check if user has add permission"""
+    return get_user_permission_level(user_perms, 'add')
+
+
+def can_user_delete(user_perms: dict) -> bool:
+    """Check if user has delete permission"""
+    return get_user_permission_level(user_perms, 'delete')
+
+
+def is_user_admin(user_perms: dict) -> bool:
+    """Check if user has admin permission"""
+    return get_user_permission_level(user_perms, 'admin')
+
+
+def can_user_run_scripts(user_perms: dict) -> bool:
+    """Check if user has run_scripts permission"""
+    return user_perms.get('run_scripts', False)
+
+
+# Combined permission checkers (user + table level)
+def can_user_view_table(user_perms: dict) -> bool:
+    """Check if user has view permission globally"""
+    return can_user_view(user_perms)
+
+
+def can_user_edit_table(user_perms: dict, table_name: str) -> bool:
+    """Check if user can edit: user must have edit permission AND table must allow edits"""
+    user_can_edit = can_user_edit(user_perms)
+    table_allows_edit = len(get_table_permissions(table_name)["editable_columns"]) > 0
+    return user_can_edit and table_allows_edit
+
+
+def can_user_add_to_table(user_perms: dict, table_name: str) -> bool:
+    """Check if user can add rows: user must have add permission AND table must allow adds"""
+    user_can_add = can_user_add(user_perms)
+    table_allows_add = can_add_rows(table_name)
+    return user_can_add and table_allows_add
+
+
+def can_user_delete_from_table(user_perms: dict, table_name: str) -> bool:
+    """Check if user can delete rows: user must have delete permission AND table must allow deletes"""
+    user_can_delete = can_user_delete(user_perms)
+    table_allows_delete = can_delete_rows(table_name)
+    return user_can_delete and table_allows_delete
 

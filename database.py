@@ -1,20 +1,53 @@
 """Database operations"""
 import psycopg2
+from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 import re
 from config import DB_CONFIG, config
 
+# ============================================================================
+# CONNECTION POOLING
+# ============================================================================
+
+_db_pool = None
+
+def initialize_connection_pool():
+    """Initialize database connection pool on startup"""
+    global _db_pool
+    try:
+        _db_pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn=2,
+            maxconn=10,
+            **DB_CONFIG
+        )
+        print("✓ Database connection pool initialized")
+    except Exception as e:
+        print(f"ERROR initializing connection pool: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
 
 def get_db_connection():
-    """Get PostgreSQL connection"""
+    """Get PostgreSQL connection from pool"""
+    global _db_pool
+    if _db_pool is None:
+        initialize_connection_pool()
+    
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        return conn
+        return _db_pool.getconn()
     except Exception as e:
         print(f"DB CONNECTION ERROR: {e}")
         import traceback
         traceback.print_exc()
         return None
+
+
+def return_db_connection(conn):
+    """Return connection to pool"""
+    global _db_pool
+    if _db_pool is not None and conn is not None:
+        _db_pool.putconn(conn)
 
 
 def filter_tables(tables: list) -> list:
@@ -75,7 +108,7 @@ def get_available_tables():
         traceback.print_exc()
         return []
     finally:
-        conn.close()
+        return_db_connection(conn)
 
 
 def get_table_columns(table_name: str):
@@ -100,7 +133,7 @@ def get_table_columns(table_name: str):
         traceback.print_exc()
         return []
     finally:
-        conn.close()
+        return_db_connection(conn)
 
 
 def get_column_types(table_name: str):
@@ -126,15 +159,15 @@ def get_column_types(table_name: str):
         traceback.print_exc()
         return {}
     finally:
-        conn.close()
+        return_db_connection(conn)
 
 
-def get_table_data(table_name: str):
-    """Get data from specified table"""
+def get_table_data(table_name: str, limit: int = 100, offset: int = 0):
+    """Get data from specified table with pagination"""
     conn = get_db_connection()
     if not conn:
         print("ERROR: Could not connect to database")
-        return []
+        return [], 0
     
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -143,20 +176,26 @@ def get_table_data(table_name: str):
         first_col_result = cursor.fetchone()
         first_col = first_col_result['column_name'] if first_col_result else 'id'
         
-        query = f"SELECT * FROM {table_name} ORDER BY {first_col}"
-        print(f"DEBUG: Executing query: {query}")
-        cursor.execute(query)
+        # Get total count
+        count_query = f"SELECT COUNT(*) as count FROM {table_name}"
+        cursor.execute(count_query)
+        count_result = cursor.fetchone()
+        total_rows = count_result['count'] if count_result else 0
+        
+        query = f"SELECT * FROM {table_name} ORDER BY {first_col} LIMIT %s OFFSET %s"
+        print(f"DEBUG: Executing query: {query} with LIMIT {limit} OFFSET {offset}")
+        cursor.execute(query, (limit, offset))
         data = cursor.fetchall()
-        print(f"Rows fetched from '{table_name}': {len(data)}")
+        print(f"Rows fetched from '{table_name}': {len(data)} (total: {total_rows})")
         cursor.close()
-        return data
+        return data, total_rows
     except Exception as e:
         print(f"ERROR fetching data from '{table_name}': {e}")
         import traceback
         traceback.print_exc()
-        return []
+        return [], 0
     finally:
-        conn.close()
+        return_db_connection(conn)
 
 
 # ============================================================================
@@ -228,7 +267,7 @@ def get_lookup_options(source_table: str, column_name: str) -> list:
         traceback.print_exc()
         return []
     finally:
-        conn.close()
+        return_db_connection(conn)
 
 
 def add_lookup_value(source_table: str, column_name: str, value: str) -> bool:
@@ -259,7 +298,7 @@ def add_lookup_value(source_table: str, column_name: str, value: str) -> bool:
         traceback.print_exc()
         return False
     finally:
-        conn.close()
+        return_db_connection(conn)
 
 
 def generate_lookups_for_table(table_name: str) -> dict:
@@ -279,3 +318,114 @@ def generate_lookups_for_table(table_name: str) -> dict:
         import traceback
         traceback.print_exc()
         return {}
+
+
+# ============================================================================
+# USER PERMISSION FUNCTIONS
+# ============================================================================
+
+def get_user_permissions(username: str) -> dict:
+    """
+    Get user permissions from fastapi_users table.
+    Returns dict: {'view': bool, 'edit': bool, 'add': bool, 'delete': bool, 'admin': bool, 'run_scripts': bool}
+    """
+    from config import FASTAPI_USERS_TABLE
+    
+    conn = get_db_connection()
+    if not conn:
+        print(f"ERROR: Could not connect to database for user permissions")
+        return {'view': False, 'edit': False, 'add': False, 'delete': False, 'admin': False, 'run_scripts': False}
+    
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        query = f'SELECT view, edit, add, delete, admin, run_scripts FROM {FASTAPI_USERS_TABLE} WHERE "user" = %s'
+        print(f"DEBUG: Fetching permissions for user '{username}': {query}")
+        cursor.execute(query, (username,))
+        result = cursor.fetchone()
+        cursor.close()
+        
+        if result:
+            return {
+                'view': result.get('view', False),
+                'edit': result.get('edit', False),
+                'add': result.get('add', False),
+                'delete': result.get('delete', False),
+                'admin': result.get('admin', False),
+                'run_scripts': result.get('run_scripts', False),
+                'username': username
+            }
+        
+        # User not found
+        print(f"WARNING: User '{username}' not found in {FASTAPI_USERS_TABLE}")
+        return {'view': False, 'edit': False, 'add': False, 'delete': False, 'admin': False, 'run_scripts': False, 'username': username}
+    
+    except Exception as e:
+        print(f"ERROR fetching user permissions for '{username}': {e}")
+        import traceback
+        traceback.print_exc()
+        return {'view': False, 'edit': False, 'add': False, 'delete': False, 'admin': False, 'username': username}
+    finally:
+        return_db_connection(conn)
+
+
+def ensure_user_exists(username: str) -> bool:
+    """
+    Check if user exists in fastapi_users table.
+    If not, create them with permissions:
+    - First user: full permissions (view=true, edit=true, add=true, delete=true, admin=true)
+    - Subsequent users: default permissions (view=true, rest=false)
+    Returns True if user exists or was created, False on error.
+    """
+    from config import FASTAPI_USERS_TABLE
+    
+    conn = get_db_connection()
+    if not conn:
+        print(f"ERROR: Could not connect to database to ensure user exists")
+        return False
+    
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Check if user already exists
+        check_query = f'SELECT COUNT(*) as cnt FROM {FASTAPI_USERS_TABLE} WHERE "user" = %s'
+        cursor.execute(check_query, (username,))
+        result = cursor.fetchone()
+        user_count = result['cnt'] if result else 0
+        
+        if user_count > 0:
+            print(f"✓ User '{username}' already exists in {FASTAPI_USERS_TABLE}")
+            cursor.close()
+            return_db_connection(conn)
+        total_result = cursor.fetchone()
+        total_users = total_result['cnt'] if total_result else 0
+        
+        is_first_user = total_users == 0
+        
+        if is_first_user:
+            # First user gets full permissions
+            print(f"DEBUG: First user '{username}' - granting full permissions")
+            insert_query = f'INSERT INTO {FASTAPI_USERS_TABLE} ("user", view, edit, add, delete, admin, run_scripts) VALUES (%s, %s, %s, %s, %s, %s, %s)'
+            cursor.execute(insert_query, (username, True, True, True, True, True, True))
+            conn.commit()
+            print(f"✓ Created first user '{username}' with FULL permissions (admin)")
+        else:
+            # Subsequent users get default permissions
+            print(f"DEBUG: Subsequent user '{username}' - granting default permissions")
+            insert_query = f'INSERT INTO {FASTAPI_USERS_TABLE} ("user", view, edit, add, delete, admin, run_scripts) VALUES (%s, %s, %s, %s, %s, %s, %s)'
+            cursor.execute(insert_query, (username, True, False, False, False, False, False))
+            conn.commit()
+            print(f"✓ Created new user '{username}' with default permissions (view only)")
+        
+        cursor.close()
+        return_db_connection(conn)
+        return True
+        
+    except Exception as e:
+        print(f"ERROR in ensure_user_exists for '{username}': {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            return_db_connection(conn)
+        except:
+            pass
+        return False

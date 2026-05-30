@@ -7,6 +7,36 @@
     <script src="https://unpkg.com/htmx.org"></script>
     <link rel="stylesheet" href="/static/css/style.css">
     {% block extra_css %}{% endblock %}
+    <script>
+        // Load saved theme preference
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        if (savedTheme === 'dark') {
+            document.documentElement.classList.add('dark-theme');
+            document.documentElement.setAttribute('data-theme', 'dark');
+        } else {
+            document.documentElement.setAttribute('data-theme', 'light');
+        }
+        
+        // Toggle theme
+        function toggleTheme() {
+            const root = document.documentElement;
+            const isDark = root.classList.toggle('dark-theme');
+            root.setAttribute('data-theme', isDark ? 'dark' : 'light');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            updateThemeButtonText();
+        }
+        
+        function updateThemeButtonText() {
+            const btn = document.getElementById('theme-toggle-btn');
+            if (btn) {
+                const isDark = document.documentElement.classList.contains('dark-theme');
+                btn.textContent = isDark ? '☀️ Light Mode' : '🌙 Dark Mode';
+            }
+        }
+        
+        // Update button text on page load
+        document.addEventListener('DOMContentLoaded', updateThemeButtonText);
+    </script>
 </head>
 <body>
     {% include "sidebar.html" %}
@@ -17,7 +47,7 @@
                 Logged in as: <strong>{{ username }}@FASTHTMX.LOCAL</strong>
             </div>
         </div>
-        <div id="content" style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <div id="content" style="background: var(--bg-content); padding: 20px; border-radius: 8px; box-shadow: var(--shadow); transition: background 0.3s, color 0.3s; color: var(--text-primary);">
             {% block page_content %}{% endblock %}
         </div>
     </div>

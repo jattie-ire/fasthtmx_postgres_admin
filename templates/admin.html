@@ -1,0 +1,526 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Panel{% endblock %}
+{% block page_title %}Admin Panel{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/material-darker.min.css">
+{% endblock %}
+
+{% block page_content %}
+<style>
+    .admin-container {
+        display: flex;
+        gap: 20px;
+    }
+    
+    .admin-tabs {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+        border-bottom: 2px solid #ecf0f1;
+    }
+    
+    .admin-tab-btn {
+        padding: 10px 20px;
+        background: #ecf0f1;
+        border: none;
+        cursor: pointer;
+        font-weight: bold;
+        border-radius: 4px 4px 0 0;
+        transition: background 0.3s;
+    }
+    
+    html.dark-theme .admin-tab-btn {
+        background: #404040;
+        color: #e0e0e0;
+    }
+    
+    .admin-tab-btn.active {
+        background: #3498db;
+        color: white;
+    }
+    
+    html.dark-theme .admin-tab-btn.active {
+        background: #4a9eff;
+        color: white;
+    }
+    
+    .admin-tab-btn:hover {
+        background: #2980b9;
+        color: white;
+    }
+    
+    html.dark-theme .admin-tab-btn:hover {
+        background: #2e7fd9;
+        color: white;
+    }
+    
+    .admin-tab-content {
+        display: none;
+    }
+    
+    .admin-tab-content.active {
+        display: block;
+    }
+    
+    .user-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+    }
+    
+    .user-table th,
+    .user-table td {
+        padding: 10px;
+        text-align: left;
+        border-bottom: 1px solid #ddd;
+    }
+    
+    html.dark-theme .user-table th,
+    html.dark-theme .user-table td {
+        border-bottom: 1px solid #404040;
+        color: #e0e0e0;
+    }
+    
+    .user-table th {
+        background: #34495e;
+        color: white;
+        font-weight: bold;
+    }
+    
+    html.dark-theme .user-table th {
+        background: #252525;
+    }
+    
+    .user-table tr:hover {
+        background: #f5f5f5;
+    }
+    
+    html.dark-theme .user-table tr:hover {
+        background: #323232;
+    }
+    
+    .perm-checkbox {
+        width: 20px;
+        height: 20px;
+        cursor: pointer;
+    }
+    
+    .user-row {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        margin-bottom: 20px;
+        padding: 15px;
+        background: #f9f9f9;
+        border-radius: 4px;
+        border: 1px solid #ecf0f1;
+    }
+    
+    html.dark-theme .user-row {
+        background: #323232;
+        border: 1px solid #404040;
+    }
+    
+    .user-row-header {
+        font-weight: bold;
+        font-size: 16px;
+        color: #2c3e50;
+    }
+    
+    html.dark-theme .user-row-header {
+        color: #e0e0e0;
+    }
+    
+    .user-perms {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+    }
+    
+    .perm-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    
+    .config-editor {
+        margin-top: 20px;
+    }
+    
+    .code-editor-wrapper {
+        display: inline-block;
+        margin-top: 15px;
+        border: 1px solid #bdc3c7;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    
+    html.dark-theme .code-editor-wrapper {
+        border: 1px solid #404040;
+    }
+    
+    .CodeMirror {
+        height: auto !important;
+        font-size: 13px !important;
+        font-family: 'Courier New', monospace !important;
+    }
+    
+    .CodeMirror-line {
+        padding: 0 4px !important;
+    }
+    
+    html.dark-theme .CodeMirror {
+        background: #2d2d2d !important;
+        color: #e0e0e0 !important;
+    }
+    
+    html.dark-theme .CodeMirror-gutters {
+        background: #1e1e1e !important;
+        border-right: 1px solid #404040 !important;
+    }
+    
+    html.dark-theme .CodeMirror-linenumber {
+        color: #888888 !important;
+    }
+    
+    html.dark-theme .CodeMirror-cursor {
+        border-left: 1px solid #e0e0e0 !important;
+    }
+    
+    html.dark-theme .CodeMirror-selected {
+        background: #3a3a3a !important;
+    }
+    
+    .button-group {
+        margin-top: 15px;
+        display: flex;
+        gap: 10px;
+    }
+    
+    .success-message {
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+        padding: 12px;
+        border-radius: 4px;
+        margin-bottom: 15px;
+        display: none;
+    }
+    
+    html.dark-theme .success-message {
+        background: rgba(81, 207, 102, 0.15);
+        border: 1px solid rgba(81, 207, 102, 0.3);
+        color: #51cf66;
+    }
+    
+    .error-message {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+        padding: 12px;
+        border-radius: 4px;
+        margin-bottom: 15px;
+        display: none;
+    }
+    
+    html.dark-theme .error-message {
+        background: rgba(255, 107, 107, 0.15);
+        border: 1px solid rgba(255, 107, 107, 0.3);
+        color: #ff6b6b;
+    }
+    
+    .loading-spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid #f3f3f3;
+        border-top: 3px solid #3498db;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+</style>
+
+<div class="admin-tabs">
+    <button class="admin-tab-btn active" onclick="switchTab(event, 'users')">User Management</button>
+    <button class="admin-tab-btn" onclick="switchTab(event, 'config')">Config Editor</button>
+</div>
+
+<!-- User Management Tab -->
+<div id="users" class="admin-tab-content active">
+    <div class="success-message" id="users-success"></div>
+    <div class="error-message" id="users-error"></div>
+    
+    <h3>Manage User Permissions</h3>
+    <p style="color: #7f8c8d; margin-bottom: 20px;">
+        Adjust individual user permissions. Each user needs at least "View" permission to access the system.
+    </p>
+    
+    <div id="users-container" style="display: flex; flex-direction: column; gap: 15px;">
+        <div class="loading-spinner" style="margin: 20px auto;"></div>
+        Loading users...
+    </div>
+</div>
+
+<!-- Config Editor Tab -->
+<div id="config" class="admin-tab-content">
+    <div class="success-message" id="config-success"></div>
+    <div class="error-message" id="config-error"></div>
+    
+    <h3>Edit config.toml</h3>
+    <p style="color: #7f8c8d; margin-bottom: 20px;">
+        Edit the application configuration file. Changes take effect immediately. A backup is automatically created.
+    </p>
+    
+    <div class="config-editor">
+        <div class="code-editor-wrapper" id="editor-container"></div>
+        <div class="button-group">
+            <button onclick="saveConfig()" class="btn btn-success">Save Config</button>
+            <button onclick="reloadConfig()" class="btn btn-secondary">Reload</button>
+            <button onclick="downloadBackup()" class="btn btn-secondary">Download Backup</button>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/toml/toml.min.js"></script>
+
+<script>
+function switchTab(event, tabName) {
+    // Hide all tabs
+    document.querySelectorAll('.admin-tab-content').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    
+    // Deactivate all buttons
+    document.querySelectorAll('.admin-tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Show selected tab
+    document.getElementById(tabName).classList.add('active');
+    event.target.classList.add('active');
+    
+    // Load content if first time
+    if (tabName === 'users') {
+        loadUsers();
+    } else if (tabName === 'config') {
+        loadConfig();
+    }
+}
+
+function loadUsers() {
+    const container = document.getElementById('users-container');
+    
+    fetch('/api/admin/users')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                showError('users', data.error);
+                return;
+            }
+            
+            container.innerHTML = '';
+            
+            if (!data.users || data.users.length === 0) {
+                container.innerHTML = '<p>No users found.</p>';
+                return;
+            }
+            
+            data.users.forEach(user => {
+                const userDiv = document.createElement('div');
+                userDiv.className = 'user-row';
+                
+                userDiv.innerHTML = `
+                    <div class="user-row-header">${user.user}${user.email ? ' (' + user.email + ')' : ''}</div>
+                    <div class="user-perms">
+                        <div class="perm-item">
+                            <input type="checkbox" class="perm-checkbox" id="view-${user.user}" 
+                                   ${user.view ? 'checked' : ''} onchange="updateUserPerm('${user.user}')">
+                            <label for="view-${user.user}">View</label>
+                        </div>
+                        <div class="perm-item">
+                            <input type="checkbox" class="perm-checkbox" id="edit-${user.user}" 
+                                   ${user.edit ? 'checked' : ''} onchange="updateUserPerm('${user.user}')">
+                            <label for="edit-${user.user}">Edit</label>
+                        </div>
+                        <div class="perm-item">
+                            <input type="checkbox" class="perm-checkbox" id="add-${user.user}" 
+                                   ${user.add ? 'checked' : ''} onchange="updateUserPerm('${user.user}')">
+                            <label for="add-${user.user}">Add</label>
+                        </div>
+                        <div class="perm-item">
+                            <input type="checkbox" class="perm-checkbox" id="delete-${user.user}" 
+                                   ${user.delete ? 'checked' : ''} onchange="updateUserPerm('${user.user}')">
+                            <label for="delete-${user.user}">Delete</label>
+                        </div>
+                        <div class="perm-item">
+                            <input type="checkbox" class="perm-checkbox" id="admin-${user.user}" 
+                                   ${user.admin ? 'checked' : ''} onchange="updateUserPerm('${user.user}')">
+                            <label for="admin-${user.user}">Admin</label>
+                        </div>
+                        <div class="perm-item">
+                            <input type="checkbox" class="perm-checkbox" id="run_scripts-${user.user}" 
+                                   ${user.run_scripts ? 'checked' : ''} onchange="updateUserPerm('${user.user}')">
+                            <label for="run_scripts-${user.user}">Run Scripts</label>
+                        </div>
+                    </div>
+                `;
+                
+                container.appendChild(userDiv);
+            });
+        })
+        .catch(err => {
+            showError('users', 'Failed to load users: ' + err);
+        });
+}
+
+function updateUserPerm(username) {
+    const formData = new FormData();
+    formData.append('view', document.getElementById(`view-${username}`).checked);
+    formData.append('edit', document.getElementById(`edit-${username}`).checked);
+    formData.append('add', document.getElementById(`add-${username}`).checked);
+    formData.append('delete', document.getElementById(`delete-${username}`).checked);
+    formData.append('admin', document.getElementById(`admin-${username}`).checked);
+    formData.append('run_scripts', document.getElementById(`run_scripts-${username}`).checked);
+    
+    fetch(`/api/admin/users/${username}`, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showError('users', data.error);
+        } else {
+            showSuccess('users', `Permissions for '${username}' updated`);
+        }
+    })
+    .catch(err => {
+        showError('users', 'Failed to update user: ' + err);
+    });
+}
+
+let configEditor = null;
+
+function initEditor() {
+    const container = document.getElementById('editor-container');
+    if (!container) return;
+    
+    configEditor = CodeMirror(container, {
+        mode: 'toml',
+        theme: 'material-darker',
+        lineNumbers: true,
+        indentUnit: 4,
+        indentWithTabs: false,
+        lineWrapping: true,
+        styleActiveLine: true,
+        matchBrackets: true,
+        autoCloseBrackets: true,
+        foldGutter: true,
+        gutters: ["CodeMirror-linenumbers", "CodeMirror-foldgutter"],
+        viewportMargin: Infinity
+    });
+    
+    loadConfig();
+}
+
+function loadConfig() {
+    if (!configEditor) return;
+    
+    fetch('/api/admin/config')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                showError('config', data.error);
+                configEditor.setValue('');
+                return;
+            }
+            configEditor.setValue(data.config);
+        })
+        .catch(err => {
+            showError('config', 'Failed to load config: ' + err);
+            configEditor.setValue('');
+        });
+}
+
+
+function saveConfig() {
+    const content = configEditor.getValue();
+    
+    fetch('/api/admin/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ config: content })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showError('config', data.error);
+        } else {
+            showSuccess('config', data.message);
+        }
+    })
+    .catch(err => {
+        showError('config', 'Failed to save config: ' + err);
+    });
+}
+
+function reloadConfig() {
+    configEditor.setValue('Loading...');
+    loadConfig();
+}
+
+function downloadBackup() {
+    fetch('/api/admin/config')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                alert('Error: ' + data.error);
+                return;
+            }
+            
+            const element = document.createElement('a');
+            element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(data.config));
+            element.setAttribute('download', 'config.toml');
+            element.style.display = 'none';
+            document.body.appendChild(element);
+            element.click();
+            document.body.removeChild(element);
+        })
+        .catch(err => {
+            alert('Failed to download: ' + err);
+        });
+}
+
+function showSuccess(section, message) {
+    const el = document.getElementById(section + '-success');
+    el.textContent = message;
+    el.style.display = 'block';
+    setTimeout(() => {
+        el.style.display = 'none';
+    }, 5000);
+}
+
+function showError(section, message) {
+    const el = document.getElementById(section + '-error');
+    el.textContent = message;
+    el.style.display = 'block';
+}
+
+// Load users and initialize editor on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadUsers();
+    initEditor();
+});
+</script>
+{% endblock %}

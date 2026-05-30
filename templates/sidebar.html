@@ -12,7 +12,7 @@
     <div class="sidebar-section">
         <h3>Edit Tables</h3>
         <div style="display: flex; gap: 8px; flex-direction: column;">
-            <select id="table-select" style="padding: 8px; border-radius: 4px; border: 1px solid #bdc3c7; background: white; color: #2c3e50; font-size: 14px;">
+            <select id="table-select" style="padding: 8px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-content); color: var(--text-primary); font-size: 14px; transition: background 0.3s, color 0.3s;">
                 <option value="">Loading tables...</option>
             </select>
             <button onclick="openTable()" class="btn btn-primary" style="font-size: 14px; padding: 8px 12px;">Open Table</button>
@@ -22,14 +22,28 @@
     <div class="sidebar-section">
         <h3>Run Scripts</h3>
         <div style="display: flex; gap: 8px; flex-direction: column;">
-            <select id="script-select" style="padding: 8px; border-radius: 4px; border: 1px solid #bdc3c7; background: white; color: #2c3e50; font-size: 14px;">
+            <select id="script-select" style="padding: 8px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-content); color: var(--text-primary); font-size: 14px; transition: background 0.3s, color 0.3s;">
                 <option value="">Loading scripts...</option>
             </select>
             <button onclick="executeScript()" class="btn btn-primary" style="font-size: 14px; padding: 8px 12px;">Execute Script</button>
         </div>
     </div>
     
-    <div class="sidebar-section" style="margin-top: 50px; border-top: 1px solid #34495e; padding-top: 20px;">
+    {% if is_admin %}
+    <div class="sidebar-section">
+        <h3>Admin</h3>
+        <ul class="sidebar-menu">
+            <li><a href="/admin" {% if page == 'admin' %}class="active"{% endif %}>Admin Panel</a></li>
+        </ul>
+    </div>
+    {% endif %}
+    
+    <div class="sidebar-section" style="margin-top: 50px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
+        <h3>Appearance</h3>
+        <button id="theme-toggle-btn" onclick="toggleTheme()" class="btn" style="width: 100%; background: var(--bg-button-primary); color: white; padding: 8px 12px; margin: 0; font-size: 14px;">🌙 Dark Mode</button>
+    </div>
+    
+    <div class="sidebar-section" style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
         <h3>Account</h3>
         <ul class="sidebar-menu">
             <li><a href="/logout" class="btn btn-danger" style="padding: 8px 12px; margin: 0;">Logout</a></li>

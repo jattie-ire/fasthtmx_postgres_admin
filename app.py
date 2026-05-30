@@ -8,7 +8,22 @@ import subprocess
 import json
 
 # Import utility modules
-from config import config, SCRIPTS_CONFIG, TABLE_PERMISSIONS, get_table_permissions
+from config import (
+    config,
+    SCRIPTS_CONFIG,
+    TABLE_PERMISSIONS,
+    get_table_permissions,
+    can_user_view_table,
+    can_user_edit_table,
+    can_user_add_to_table,
+    can_user_delete_from_table,
+    can_user_view,
+    can_user_edit,
+    can_user_add,
+    can_user_delete,
+    is_user_admin,
+    can_user_run_scripts,
+)
 from auth import kerberos_auth
 from database import (
     get_db_connection,
@@ -20,8 +35,11 @@ from database import (
     add_lookup_value,
     find_source_table,
     generate_lookups_for_table,
+    get_user_permissions,
+    ensure_user_exists,
 )
 from templates import render_template
+from database import initialize_connection_pool
 
 app = FastAPI()
 
@@ -29,6 +47,18 @@ app = FastAPI()
 static_dir = Path(__file__).parent / "static"
 static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+# ============================================================================
+# APP STARTUP
+# ============================================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database connection pool on app startup"""
+    print("Initializing application...")
+    initialize_connection_pool()
+    print("✓ Application startup complete")
 
 
 # ============================================================================
@@ -88,7 +118,12 @@ async def root(request: Request):
 @app.post("/login", response_class=HTMLResponse)
 async def login(request: Request, username: str = Form(...), password: str = Form(...)):
     """Login endpoint"""
+    from database import ensure_user_exists
+    
     if kerberos_auth(username, password):
+        # Ensure user exists in fastapi_users table
+        ensure_user_exists(username)
+        
         response = RedirectResponse(url="/dashboard", status_code=303)
         response.set_cookie("username", username)
         return response
@@ -103,6 +138,11 @@ async def dashboard(request: Request):
     username = request.cookies.get("username")
     if not username:
         return RedirectResponse(url="/", status_code=303)
+    
+    # Check user has view permission
+    user_perms = get_user_permissions(username)
+    if not can_user_view(user_perms):
+        return render_template("error.html", {"error": "You do not have permission to view data", "username": username})
     
     # Get the view name from config
     view_name = config.get("dashboard", {}).get("display_view", "")
@@ -167,9 +207,12 @@ async def dashboard(request: Request):
     display_text = config.get("dashboard", {}).get("display_text", "")
     display_description = config.get("dashboard", {}).get("display_description", "")
     
+    user_perms = get_user_permissions(username)
+    
     html = render_template("dashboard.html", {
         "username": username,
         "page": "dashboard",
+        "is_admin": is_user_admin(user_perms),
         "available_tables": [],
         "view_name": view_name,
         "display_text": display_text,
@@ -178,6 +221,167 @@ async def dashboard(request: Request):
         "data": data
     })
     return html
+
+
+# ADMIN ENDPOINTS
+# ============================================================================
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_panel(request: Request):
+    """Admin panel - manage users and config"""
+    username = request.cookies.get("username")
+    if not username:
+        return RedirectResponse(url="/", status_code=303)
+    
+    user_perms = get_user_permissions(username)
+    if not is_user_admin(user_perms):
+        return render_template("error.html", {"error": "You do not have admin privileges", "username": username})
+    
+    html = render_template("admin.html", {
+        "username": username,
+        "page": "admin",
+        "is_admin": True
+    })
+    return html
+
+
+@app.get("/api/admin/users")
+async def api_get_users(request: Request):
+    """Get list of all users from fastapi_users table"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    user_perms = get_user_permissions(username)
+    if not is_user_admin(user_perms):
+        return {"error": "Admin privileges required"}
+    
+    from config import FASTAPI_USERS_TABLE
+    
+    conn = get_db_connection()
+    if not conn:
+        return {"error": "Database connection failed"}
+    
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        query = f'SELECT "user", email, view, edit, add, delete, admin, run_scripts FROM {FASTAPI_USERS_TABLE} ORDER BY "user"'
+        cursor.execute(query)
+        users = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return {"users": [dict(u) for u in users]}
+    except Exception as e:
+        print(f"ERROR fetching users: {e}")
+        return {"error": str(e)}
+
+
+@app.post("/api/admin/users/{user_to_edit}")
+async def api_update_user(user_to_edit: str, request: Request):
+    """Update user permissions"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    user_perms = get_user_permissions(username)
+    if not is_user_admin(user_perms):
+        return {"error": "Admin privileges required"}
+    
+    from config import FASTAPI_USERS_TABLE
+    
+    form_data = await request.form()
+    
+    conn = get_db_connection()
+    if not conn:
+        return {"error": "Database connection failed"}
+    
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Parse boolean values from form
+        view = form_data.get('view') == 'on' or form_data.get('view') == 'true'
+        edit = form_data.get('edit') == 'on' or form_data.get('edit') == 'true'
+        add = form_data.get('add') == 'on' or form_data.get('add') == 'true'
+        delete = form_data.get('delete') == 'on' or form_data.get('delete') == 'true'
+        admin = form_data.get('admin') == 'on' or form_data.get('admin') == 'true'
+        run_scripts = form_data.get('run_scripts') == 'on' or form_data.get('run_scripts') == 'true'
+        
+        update_query = f'UPDATE {FASTAPI_USERS_TABLE} SET view = %s, edit = %s, add = %s, delete = %s, admin = %s, run_scripts = %s WHERE "user" = %s'
+        cursor.execute(update_query, (view, edit, add, delete, admin, run_scripts, user_to_edit))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return {"success": True, "message": f"User '{user_to_edit}' permissions updated"}
+    except Exception as e:
+        print(f"ERROR updating user: {e}")
+        return {"error": str(e)}
+
+
+@app.get("/api/admin/config")
+async def api_get_config(request: Request):
+    """Get current config.toml content"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    user_perms = get_user_permissions(username)
+    if not is_user_admin(user_perms):
+        return {"error": "Admin privileges required"}
+    
+    try:
+        config_path = Path(__file__).parent / "config.toml"
+        with open(config_path, "r") as f:
+            content = f.read()
+        return {"config": content}
+    except Exception as e:
+        print(f"ERROR reading config: {e}")
+        return {"error": str(e)}
+
+
+@app.post("/api/admin/config")
+async def api_update_config(request: Request):
+    """Update config.toml"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    user_perms = get_user_permissions(username)
+    if not is_user_admin(user_perms):
+        return {"error": "Admin privileges required"}
+    
+    try:
+        body = await request.json()
+        new_content = body.get("config", "")
+        
+        # Validate TOML syntax
+        import tomllib
+        try:
+            tomllib.loads(new_content)
+        except Exception as parse_err:
+            return {"error": f"Invalid TOML syntax: {str(parse_err)}"}
+        
+        config_path = Path(__file__).parent / "config.toml"
+        
+        # Create backup
+        backup_path = config_path.with_suffix(".toml.bak")
+        with open(config_path, "r") as f:
+            backup_content = f.read()
+        with open(backup_path, "w") as f:
+            f.write(backup_content)
+        
+        # Write new config
+        with open(config_path, "w") as f:
+            f.write(new_content)
+        
+        # Reload config cache
+        from config import reload_config
+        reload_config()
+        
+        print(f"Config updated by {username}, backup saved to {backup_path}")
+        return {"success": True, "message": "Config updated successfully (backup saved)"}
+    except Exception as e:
+        print(f"ERROR updating config: {e}")
+        return {"error": str(e)}
 
 
 @app.get("/logout", response_class=HTMLResponse)
@@ -198,32 +402,42 @@ async def help(request: Request):
     if not username:
         return RedirectResponse(url="/", status_code=303)
     
+    user_perms = get_user_permissions(username)
+    
     html = render_template("help.html", {
         "username": username,
         "page": "help",
+        "is_admin": is_user_admin(user_perms),
         "available_tables": []
     })
     return html
 
 
-@app.post("/save-row")
+@app.post("/save-row", response_class=HTMLResponse)
 async def save_row(request: Request, table_name: str = Form(...)):
     """Save edited row"""
     username = request.cookies.get("username")
     if not username:
-        return {"error": "Not authenticated"}
+        return render_template("error.html", {"error": "Not authenticated", "username": "guest"})
     
     form_data = await request.form()
     table_name = form_data.get('table_name')
     
     try:
-        # Check permissions
+        # Get user permissions
+        user_perms = get_user_permissions(username)
+        
+        # Check if user can edit
+        if not can_user_edit(user_perms):
+            return render_template("error.html", {"error": "You do not have permission to edit data", "username": username})
+        
+        # Check table permissions
         perms = get_table_permissions(table_name)
         editable_columns = set(perms["editable_columns"])
         
         conn = get_db_connection()
         if not conn:
-            return {"error": "Database connection failed"}
+            return render_template("error.html", {"error": "Database connection failed", "username": username})
         
         columns = get_table_columns(table_name)
         col_types = get_column_types(table_name)
@@ -248,7 +462,7 @@ async def save_row(request: Request, table_name: str = Form(...)):
                     values.append(form_data.get(col))
         
         if not set_clauses:
-            return {"error": "No editable columns to update"}
+            return render_template("error.html", {"error": "No editable columns to update", "username": username})
         
         values.append(row_id)
         query = f"UPDATE {table_name} SET {', '.join(set_clauses)} WHERE {id_column} = %s"
@@ -265,28 +479,35 @@ async def save_row(request: Request, table_name: str = Form(...)):
         print(f"ERROR saving row: {e}")
         import traceback
         traceback.print_exc()
-        return {"error": str(e)}
+        return render_template("error.html", {"error": str(e), "username": username})
 
 
-@app.post("/add-row")
+@app.post("/add-row", response_class=HTMLResponse)
 async def add_row(request: Request, table_name: str = Form(...)):
     """Add a new row"""
     username = request.cookies.get("username")
     if not username:
-        return {"error": "Not authenticated"}
+        return render_template("error.html", {"error": "Not authenticated", "username": "guest"})
     
     form_data = await request.form()
     table_name = form_data.get('table_name')
     
     try:
-        # Check permissions
+        # Get user permissions
+        user_perms = get_user_permissions(username)
+        
+        # Check if user can add rows
+        if not can_user_add(user_perms):
+            return render_template("error.html", {"error": "You do not have permission to add rows", "username": username})
+        
+        # Check table permissions
         perms = get_table_permissions(table_name)
         if not perms["allow_add"]:
-            return {"error": "Adding rows to this table is not allowed"}
+            return render_template("error.html", {"error": "Adding rows to this table is not allowed", "username": username})
         
         conn = get_db_connection()
         if not conn:
-            return {"error": "Database connection failed"}
+            return render_template("error.html", {"error": "Database connection failed", "username": username})
         
         columns = get_table_columns(table_name)
         col_types = get_column_types(table_name)
@@ -323,28 +544,35 @@ async def add_row(request: Request, table_name: str = Form(...)):
         print(f"ERROR adding row: {e}")
         import traceback
         traceback.print_exc()
-        return {"error": str(e)}
+        return render_template("error.html", {"error": str(e), "username": username})
 
 
-@app.post("/delete-row")
+@app.post("/delete-row", response_class=HTMLResponse)
 async def delete_row(request: Request, table_name: str = Form(...)):
     """Delete a row"""
     username = request.cookies.get("username")
     if not username:
-        return {"error": "Not authenticated"}
+        return render_template("error.html", {"error": "Not authenticated", "username": "guest"})
     
     form_data = await request.form()
     table_name = form_data.get('table_name')
     
     try:
-        # Check permissions
+        # Get user permissions
+        user_perms = get_user_permissions(username)
+        
+        # Check if user can delete rows
+        if not can_user_delete(user_perms):
+            return render_template("error.html", {"error": "You do not have permission to delete rows", "username": username})
+        
+        # Check table permissions
         perms = get_table_permissions(table_name)
         if not perms["allow_delete"]:
-            return {"error": "Deleting rows from this table is not allowed"}
+            return render_template("error.html", {"error": "Deleting rows from this table is not allowed", "username": username})
         
         conn = get_db_connection()
         if not conn:
-            return {"error": "Database connection failed"}
+            return render_template("error.html", {"error": "Database connection failed", "username": username})
         
         columns = get_table_columns(table_name)
         id_column = columns[0]
@@ -364,7 +592,7 @@ async def delete_row(request: Request, table_name: str = Form(...)):
         print(f"ERROR deleting row: {e}")
         import traceback
         traceback.print_exc()
-        return {"error": str(e)}
+        return render_template("error.html", {"error": str(e), "username": username})
 
 
 @app.put("/api/table/{table_name}/{row_id}")
@@ -428,15 +656,29 @@ async def api_get_tables(request: Request):
 
 
 @app.get("/table/{table_name}", response_class=HTMLResponse)
-async def get_table_data_route(table_name: str, request: Request):
-    """Get table data for editing"""
+async def get_table_data_route(table_name: str, request: Request, page: int = 1, limit: int = 100):
+    """Get table data for editing with pagination"""
     username = request.cookies.get("username")
     if not username:
         return RedirectResponse(url="/", status_code=303)
     
+    # Get user permissions and check if they can view
+    user_perms = get_user_permissions(username)
+    if not can_user_view(user_perms):
+        return render_template("error.html", {"error": "You do not have permission to view data", "username": username})
+    
+    # Validate page number
+    page = max(1, page)
+    offset = (page - 1) * limit
+    
     columns = get_table_columns(table_name)
     col_types = get_column_types(table_name)
-    data = get_table_data(table_name)
+    data, total_rows = get_table_data(table_name, limit=limit, offset=offset)
+    
+    # Calculate pagination info
+    total_pages = (total_rows + limit - 1) // limit  # Ceiling division
+    has_prev = page > 1
+    has_next = page < total_pages
     
     # Get table permissions
     perms = get_table_permissions(table_name)
@@ -462,12 +704,22 @@ async def get_table_data_route(table_name: str, request: Request):
         "table_name": table_name,
         "username": username,
         "page": "table",
+        "is_admin": is_user_admin(user_perms),
         "available_tables": [],
         "lookups": lookups,
         "lookup_options": lookup_options,
-        "allow_add": perms["allow_add"],
-        "allow_delete": perms["allow_delete"],
-        "editable_columns": perms["editable_columns"]
+        "allow_add": perms["allow_add"] and can_user_add(user_perms),
+        "allow_delete": perms["allow_delete"] and can_user_delete(user_perms),
+        "editable_columns": perms["editable_columns"] if can_user_edit(user_perms) else [],
+        # Pagination info
+        "current_page": page,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+        "page_size": limit,
+        "has_prev": has_prev,
+        "has_next": has_next,
+        "prev_page": page - 1,
+        "next_page": page + 1,
     })
     return html
 
@@ -624,6 +876,10 @@ async def api_get_scripts(request: Request):
     if not username:
         return {"error": "Not authenticated"}
     
+    user_perms = get_user_permissions(username)
+    if not can_user_run_scripts(user_perms):
+        return {"error": "You do not have permission to run scripts"}
+    
     try:
         scripts_list = [
             {"name": script_name, "path": script_path}
@@ -695,10 +951,15 @@ async def execute_script(script_name: str, request: Request):
     if not username:
         return RedirectResponse(url="/", status_code=303)
     
+    user_perms = get_user_permissions(username)
+    if not can_user_run_scripts(user_perms):
+        return render_template("error.html", {"error": "You do not have permission to run scripts", "username": username})
+    
     result = execute_script_internal(script_name)
     
     html = render_template("script_results.html", {
         "username": username,
+        "is_admin": is_user_admin(user_perms),
         "success": result.get("success", False),
         "script_name": result.get("script_name", script_name),
         "return_code": result.get("return_code", ""),
@@ -716,6 +977,10 @@ async def api_execute_script(script_name: str, request: Request):
     username = request.cookies.get("username")
     if not username:
         return {"error": "Not authenticated"}
+    
+    user_perms = get_user_permissions(username)
+    if not can_user_run_scripts(user_perms):
+        return {"error": "You do not have permission to run scripts"}
     
     result = execute_script_internal(script_name)
     result["message"] = "Script executed successfully" if result.get("success") else "Script completed with errors"

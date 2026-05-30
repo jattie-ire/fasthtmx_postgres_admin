@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}Error - FastAPI HTMX App{% endblock %}
+
+{% block page_title %}Error{% endblock %}
+
+{% block page_content %}
+<div style="padding: 20px; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; color: #721c24; margin: 20px 0;">
+    <h2>Access Denied</h2>
+    <p>{{ error }}</p>
+    <p><a href="/dashboard">Return to Dashboard</a></p>
+</div>
+{% endblock %}

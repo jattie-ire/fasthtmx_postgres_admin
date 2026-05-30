@@ -67,7 +67,7 @@
                         </td>
                         {% endfor %}
                         <td class="table-actions-cell">
-                            <button type="submit" class="btn-row-save">Save</button>
+                            {% if editable_columns %}<button type="submit" class="btn-row-save">Save</button>{% endif %}
                             {% if allow_delete %}<button type="submit" class="btn-row-delete" formaction="/delete-row" onclick="return confirm('Delete this row?');">Delete</button>{% endif %}
                         </td>
                     </tr>
@@ -171,6 +171,50 @@
         </tbody>
     </table>
 </div>
+
+<!-- Pagination Controls -->
+<div class="pagination-controls" style="margin-top: 20px; display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;">
+    <span style="color: var(--text-secondary);">
+        Showing {{ (current_page - 1) * page_size + 1 }} - {{ [current_page * page_size, total_rows] | min }} of {{ total_rows }} rows
+    </span>
+    
+    {% if has_prev %}
+    <a href="/table/{{ table_name }}?page=1&limit={{ page_size }}" class="btn-pagination">« First</a>
+    <a href="/table/{{ table_name }}?page={{ prev_page }}&limit={{ page_size }}" class="btn-pagination">‹ Previous</a>
+    {% else %}
+    <span class="btn-pagination" style="opacity: 0.5; cursor: not-allowed;">« First</span>
+    <span class="btn-pagination" style="opacity: 0.5; cursor: not-allowed;">‹ Previous</span>
+    {% endif %}
+    
+    <span style="color: var(--text-primary); font-weight: bold;">
+        Page {{ current_page }} of {{ total_pages }}
+    </span>
+    
+    {% if has_next %}
+    <a href="/table/{{ table_name }}?page={{ next_page }}&limit={{ page_size }}" class="btn-pagination">Next ›</a>
+    <a href="/table/{{ table_name }}?page={{ total_pages }}&limit={{ page_size }}" class="btn-pagination">Last »</a>
+    {% else %}
+    <span class="btn-pagination" style="opacity: 0.5; cursor: not-allowed;">Next ›</span>
+    <span class="btn-pagination" style="opacity: 0.5; cursor: not-allowed;">Last »</span>
+    {% endif %}
+    
+    <select id="page-size-select" style="padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-content); color: var(--text-primary);">
+        <option value="25" {% if page_size == 25 %}selected{% endif %}>25 rows</option>
+        <option value="50" {% if page_size == 50 %}selected{% endif %}>50 rows</option>
+        <option value="100" {% if page_size == 100 %}selected{% endif %}>100 rows</option>
+        <option value="200" {% if page_size == 200 %}selected{% endif %}>200 rows</option>
+        <option value="500" {% if page_size == 500 %}selected{% endif %}>500 rows</option>
+    </select>
+</div>
+
+<script>
+// Handle page size change
+document.getElementById('page-size-select').addEventListener('change', function() {
+    const newPageSize = this.value;
+    window.location.href = `/table/{{ table_name }}?page=1&limit=${newPageSize}`;
+});
+</script>
+
 {% else %}
 <div class="alert alert-error">
     Could not connect to database or table not found.
