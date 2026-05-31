@@ -17,6 +17,16 @@ display_view = "your_view_name"
 display_text = "Dashboard Title"
 display_description = "Description of what this dashboard shows"
 
+[age_coloring]
+# Enable age-based row coloring (white for today, red for oldest)
+enabled = false
+# Table(s) to apply age coloring to (leave empty to apply to all tables)
+tables = []
+# Comma-separated list of column names to use for age calculation
+columns = ["last_updated", "created_date", "updated_at"]
+# Max age in days to calculate red intensity (older rows will be same red)
+max_age_days = 365
+
 [lookups]
 table_name = ["column1", "column2"]
 another_table = ["lookup_column"]

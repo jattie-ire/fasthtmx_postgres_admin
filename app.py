@@ -41,6 +41,7 @@ from database import (
     export_table_to_csv,
     export_table_to_excel,
     insert_imported_rows,
+    get_disk_stats,
 )
 from templates import render_template
 from database import initialize_connection_pool
@@ -230,6 +231,24 @@ async def dashboard(request: Request):
     
     user_perms = get_user_permissions(username)
     
+    # Get age coloring configuration
+    age_coloring_config = config.get("age_coloring", {})
+    age_coloring_enabled = age_coloring_config.get("enabled", False)
+    age_coloring_column = None
+    
+    if age_coloring_enabled:
+        # Check if dashboard view is in the list of tables to apply age coloring
+        age_coloring_tables = age_coloring_config.get("tables", [])
+        should_apply = not age_coloring_tables or view_name in age_coloring_tables
+        
+        if should_apply:
+            # Find first matching column in this table
+            possible_columns = age_coloring_config.get("columns", ["last_updated", "created_date", "updated_at"])
+            for col in possible_columns:
+                if col in columns:
+                    age_coloring_column = col
+                    break
+    
     html = render_template("dashboard.html", {
         "username": username,
         "page": "dashboard",
@@ -239,7 +258,11 @@ async def dashboard(request: Request):
         "display_text": display_text,
         "display_description": display_description,
         "columns": columns,
-        "data": data
+        "data": data,
+        # Age coloring
+        "age_coloring_enabled": age_coloring_enabled,
+        "age_coloring_column": age_coloring_column,
+        "max_age_days": age_coloring_config.get("max_age_days", 365),
     })
     return html
 
@@ -678,6 +701,17 @@ async def api_get_tables(request: Request):
     return {"tables": tables}
 
 
+@app.get("/api/disk-stats")
+async def api_get_disk_stats(request: Request):
+    """API endpoint to get disk usage statistics"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "unauthorized"}
+    
+    stats = get_disk_stats()
+    return stats
+
+
 @app.get("/table/{table_name}", response_class=HTMLResponse)
 async def get_table_data_route(table_name: str, request: Request, page: int = 1, limit: int = 100):
     """Get table data for editing with pagination"""
@@ -719,6 +753,24 @@ async def get_table_data_route(table_name: str, request: Request, page: int = 1,
         source_def = lookups[col]  # Format: "table.column"
         options = get_lookup_options(source_def, col)
         lookup_options[col] = options
+    
+    # Get age coloring configuration
+    age_coloring_config = config.get("age_coloring", {})
+    age_coloring_enabled = age_coloring_config.get("enabled", False)
+    age_coloring_column = None
+    
+    if age_coloring_enabled:
+        # Check if this table is in the list of tables to apply age coloring
+        age_coloring_tables = age_coloring_config.get("tables", [])
+        should_apply = not age_coloring_tables or table_name in age_coloring_tables
+        
+        if should_apply:
+            # Find first matching column in this table
+            possible_columns = age_coloring_config.get("columns", ["last_updated", "created_date", "updated_at"])
+            for col in possible_columns:
+                if col in columns:
+                    age_coloring_column = col
+                    break
     
     html = render_template("table.html", {
         "columns": columns,

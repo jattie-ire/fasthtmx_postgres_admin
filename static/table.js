@@ -431,4 +431,192 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+// Age-based row coloring function
+function applyAgeBasedColoring() {
+    if (!window.ageColoringConfig || !window.ageColoringConfig.enabled || !window.ageColoringConfig.column) {
+        console.log('Age coloring disabled or not configured', window.ageColoringConfig);
+        return;
+    }
+    
+    const config = window.ageColoringConfig;
+    console.log('Age coloring config:', config);
+    
+    const table = document.querySelector('.table-editor');
+    if (!table) {
+        console.log('Table not found');
+        return;
+    }
+    
+    const headerCells = table.querySelectorAll('thead th');
+    let ageColumnIndex = -1;
+    
+    console.log('Header cells:', headerCells.length);
+    
+    // Find the column index
+    for (let i = 0; i < headerCells.length; i++) {
+        const headerText = headerCells[i].textContent.trim();
+        console.log(`Header ${i}: "${headerText}"`);
+        if (headerText === config.column) {
+            ageColumnIndex = i;
+            break;
+        }
+    }
+    
+    console.log(`Age column index: ${ageColumnIndex} (looking for "${config.column}")`);
+    
+    if (ageColumnIndex === -1) {
+        console.log('Column not found');
+        return;
+    }
+    
+    const rows = table.querySelectorAll('tbody tr');
+    console.log('Rows found:', rows.length);
+    
+    if (rows.length === 0) {
+        console.log('No rows found');
+        return;
+    }
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    let ages = [];
+    const rowAges = [];
+    
+    // Calculate ages for all rows
+    rows.forEach((row, idx) => {
+        const cells = row.querySelectorAll('td');
+        if (cells[ageColumnIndex]) {
+            const dateStr = cells[ageColumnIndex].textContent.trim();
+            console.log(`Row ${idx} date: "${dateStr}"`);
+            const date = parseDate(dateStr);
+            
+            if (date) {
+                date.setHours(0, 0, 0, 0);
+                const daysAgo = Math.floor((today - date) / (1000 * 60 * 60 * 24));
+                console.log(`Row ${idx} age: ${daysAgo} days`);
+                ages.push(daysAgo);
+                rowAges.push(daysAgo);
+            } else {
+                console.log(`Row ${idx} date parse failed`);
+                rowAges.push(0);
+            }
+        }
+    });
+    
+    console.log('Ages:', ages);
+    
+    if (ages.length === 0) {
+        console.log('No valid dates found');
+        return;
+    }
+    
+    const minAge = Math.min(...ages);
+    const maxAge = Math.min(Math.max(...ages), config.maxAgeDays);
+    
+    // Apply colors to rows
+    rows.forEach((row, idx) => {
+        const age = rowAges[idx];
+        
+        if (age === undefined || age < 0) {
+            row.style.backgroundColor = '';
+            return;
+        }
+        
+        // Calculate intensity
+        let intensity = 0;
+        if (minAge === maxAge) {
+            // All rows are the same age
+            if (minAge > 0) {
+                // All old - use a light red
+                intensity = 0.2;
+            } else {
+                // All today - use default
+                intensity = 0;
+            }
+        } else {
+            // Calculate intensity (0 = default theme, 1 = full red)
+            if (age === minAge) {
+                intensity = 0; // Newest = default theme color
+            } else if (age >= config.maxAgeDays) {
+                intensity = 1; // Older than max = full red
+            } else {
+                intensity = (age - minAge) / (maxAge - minAge);
+            }
+        }
+        
+        if (intensity === 0) {
+            // Use default theme color (remove inline style)
+            row.style.backgroundColor = '';
+        } else {
+            // Check if dark mode is active
+            const isDarkMode = document.documentElement.classList.contains('dark-theme');
+            
+            let color;
+            if (isDarkMode) {
+                // Dark mode: use rgba with red tint for subtlety
+                const alpha = intensity * 0.4; // max 40% opacity
+                color = `rgba(220, 80, 80, ${alpha})`;
+            } else {
+                // Light mode: white to very light pink
+                const r = Math.round(255);
+                const g = Math.round(255 - (intensity * 80)); // 255 to 175
+                const b = Math.round(255 - (intensity * 80)); // 255 to 175
+                color = `rgb(${r}, ${g}, ${b})`;
+            }
+            
+            row.style.backgroundColor = color;
+            console.log(`Row ${idx} color: ${color}`);
+        }
+    });
+    
+    console.log('Age coloring applied successfully');
+}
+
+// Helper function to parse dates in various formats
+function parseDate(dateStr) {
+    if (!dateStr) return null;
+    
+    // Try ISO format (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)
+    let date = new Date(dateStr);
+    if (!isNaN(date)) return date;
+    
+    // Try other formats
+    const formats = [
+        /(\d{4})-(\d{2})-(\d{2})/,  // YYYY-MM-DD
+        /(\d{2})\/(\d{2})\/(\d{4})/, // MM/DD/YYYY
+    ];
+    
+    for (const regex of formats) {
+        const match = dateStr.match(regex);
+        if (match) {
+            if (regex === formats[0]) {
+                return new Date(match[1], match[2] - 1, match[3]);
+            } else if (regex === formats[1]) {
+                return new Date(match[3], match[1] - 1, match[2]);
+            }
+        }
+    }
+    
+    return null;
+}
+
+// Apply age coloring when page loads
+function initAgeColoring() {
+    console.log('✓ initAgeColoring called');
+    console.log('window.ageColoringConfig:', window.ageColoringConfig);
+    setTimeout(() => {
+        console.log('✓ Calling applyAgeBasedColoring()');
+        applyAgeBasedColoring();
+    }, 100);
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initAgeColoring);
+} else {
+    // DOM already loaded
+    console.log('✓ DOM already loaded, calling initAgeColoring immediately');
+    initAgeColoring();
+}
+
 // End of file

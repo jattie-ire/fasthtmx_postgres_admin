@@ -3,6 +3,7 @@ import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
 import re
+import shutil
 from config import DB_CONFIG, config
 
 # ============================================================================
@@ -716,3 +717,84 @@ def insert_imported_rows(table_name: str, rows: list, skip_duplicates: bool = Tr
     
     finally:
         return_db_connection(conn)
+
+
+# ============================================================================
+# DISK USAGE MONITORING
+# ============================================================================
+
+def get_system_disk_usage(path: str = '/') -> dict:
+    """Get system disk usage for a given path"""
+    try:
+        usage = shutil.disk_usage(path)
+        total = usage.total
+        used = usage.used
+        free = usage.free
+        percent = (used / total * 100) if total > 0 else 0
+        
+        return {
+            'total': total,
+            'used': used,
+            'free': free,
+            'percent': round(percent, 2),
+            'total_gb': round(total / (1024**3), 2),
+            'used_gb': round(used / (1024**3), 2),
+            'free_gb': round(free / (1024**3), 2),
+        }
+    except Exception as e:
+        print(f"ERROR getting system disk usage: {e}")
+        return {'error': str(e)}
+
+
+def get_database_disk_usage() -> dict:
+    """Get PostgreSQL database size"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Query database size
+        cursor.execute("""
+            SELECT 
+                pg_database.datname,
+                pg_size_pretty(pg_database_size(pg_database.datname)) AS size,
+                pg_database_size(pg_database.datname) AS size_bytes
+            FROM pg_database 
+            WHERE datname = current_database()
+        """)
+        
+        result = cursor.fetchone()
+        cursor.close()
+        return_db_connection(conn)
+        
+        if result:
+            size_bytes = result[2] if result[2] else 0
+            return {
+                'name': result[0],
+                'size': result[1],
+                'size_bytes': size_bytes,
+                'size_gb': round(size_bytes / (1024**3), 2),
+            }
+        return {'error': 'Database not found'}
+    except Exception as e:
+        print(f"ERROR getting database disk usage: {e}")
+        return {'error': str(e)}
+
+
+def get_disk_stats() -> dict:
+    """Get combined system and database disk statistics"""
+    system_stats = get_system_disk_usage()
+    db_stats = get_database_disk_usage()
+    
+    # Calculate database as percentage of total system disk
+    if 'error' not in system_stats and 'error' not in db_stats:
+        db_percent = (db_stats['size_bytes'] / system_stats['total']) * 100
+        db_stats['percent_of_system'] = round(db_percent, 2)
+    
+    # Use system disk usage as the main gauge metric
+    gauge_percent = system_stats.get('percent', 0) if 'error' not in system_stats else 0
+    
+    return {
+        'system': system_stats,
+        'database': db_stats,
+        'gauge_percent': round(gauge_percent, 2)
+    }
