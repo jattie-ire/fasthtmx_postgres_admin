@@ -4,8 +4,118 @@
 
 {% block page_title %}Edit Table: {{ table_name }}{% endblock %}
 
+{# Macro for rendering add-row form cell content #}
+{% macro render_input_cell(col, columns, col_types, lookups, lookup_options, editable_columns, allow_add, table_name, is_first=False, row=None, is_add_form=False) %}
+    {% set col_type = col_types.get(col, 'text') %}
+    {% if is_first %}
+        {% if is_add_form %}
+            <span class="add-row-label">Auto increment</span>
+        {% else %}
+            <strong class="table-data-cell-primary">{{ row[col] }}</strong>
+            <input type="hidden" name="{{ col }}" value="{{ row[col] | default('') }}">
+        {% endif %}
+    {% else %}
+        {% if is_add_form %}
+            {% if not allow_add %}
+                <span class="add-row-label" style="color: #95a5a6;">No add allowed</span>
+            {% elif col in lookups %}
+                <div style="display: flex; gap: 4px;">
+                    <select name="{{ col }}" class="input-field-add-row">
+                        <option value="">-- Select {{ col }} --</option>
+                        {% for opt in lookup_options.get(col, []) %}
+                        <option value="{{ opt }}">{{ opt }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="button" class="btn-add-lookup" data-table="{{ table_name }}" data-col="{{ col }}" data-source="{{ lookups[col] }}" title="Add new {{ col }}">+</button>
+                </div>
+            {% elif col_type in ['integer', 'bigint', 'smallint'] %}
+                <input type="number" step="1" name="{{ col }}" placeholder="0" class="input-field-add-row">
+            {% elif col_type in ['numeric', 'decimal', 'double precision', 'real'] %}
+                <input type="number" step="any" name="{{ col }}" placeholder="0.0" class="input-field-add-row">
+            {% elif col_type in ['date'] %}
+                <input type="date" name="{{ col }}" class="input-field-add-row">
+            {% elif col_type in ['timestamp', 'timestamp with time zone', 'timestamp without time zone'] %}
+                <input type="datetime-local" name="{{ col }}" class="input-field-add-row">
+            {% elif col_type == 'boolean' %}
+                <input type="checkbox" name="{{ col }}" class="input-checkbox">
+            {% else %}
+                <input type="text" name="{{ col }}" placeholder="Enter value" class="input-field-add-row">
+            {% endif %}
+        {% endif %}
+    {% endif %}
+{% endmacro %}
+
 {% block page_content %}
+<script src="/static/table.js?v={{ range(1, 999999) | random }}"></script>
 <h3>Table: {{ table_name }}</h3>
+
+<!-- Import/Export Buttons -->
+<div style="margin-bottom: 20px; display: flex; gap: 10px;">
+    {% if can_export %}
+    <a href="/export-table/{{ table_name }}?format=csv" class="btn btn-primary" download style="text-decoration: none; padding: 10px 15px; font-size: 13px;">
+        ↓ Export CSV
+    </a>
+    <a href="/export-table/{{ table_name }}?format=xlsx" class="btn btn-primary" download style="text-decoration: none; padding: 10px 15px; font-size: 13px;">
+        ↓ Export Excel
+    </a>
+    {% endif %}
+    {% if can_import %}
+    <button id="import-btn-toggle" class="btn btn-success" style="padding: 10px 15px; font-size: 13px;">
+        ↑ Import Data
+    </button>
+    {% endif %}
+</div>
+
+<!-- Import Modal -->
+<div id="import-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; overflow: auto;">
+    <div style="background: var(--bg-content); margin: 50px auto; padding: 30px; border-radius: 8px; max-width: 600px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">
+        <h2 style="margin-top: 0; color: var(--text-primary);">Import Data</h2>
+        
+        <!-- File Upload Section -->
+        <div id="import-upload-section" style="margin-bottom: 20px;">
+            <div id="import-form" style="border: 2px dashed var(--border-color); padding: 20px; border-radius: 4px; text-align: center; cursor: pointer;">
+                <input type="file" id="import-file" name="file" accept=".csv,.xlsx" style="display: none;" onchange="handleImportFile(event)">
+                <p style="margin: 0; color: var(--text-secondary);">Click to select CSV or Excel file</p>
+                <p style="margin: 5px 0 0 0; font-size: 12px; color: #95a5a6;">or drag & drop</p>
+            </div>
+        </div>
+        
+        <!-- Preview Section (initially hidden) -->
+        <div id="import-preview-section" style="display: none; margin: 20px 0; border: 1px solid var(--border-color); padding: 15px; border-radius: 4px; max-height: 300px; overflow-y: auto;">
+            <h4 style="margin-top: 0; color: var(--text-primary);">Preview</h4>
+            <table id="import-preview-table" style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                <thead style="background: var(--bg-table-header); color: white;">
+                    <tr id="import-preview-header"></tr>
+                </thead>
+                <tbody id="import-preview-body"></tbody>
+            </table>
+            <div id="import-errors" style="margin-top: 10px; color: var(--text-error);"></div>
+            <div id="import-warnings" style="margin-top: 10px; color: #f39c12;"></div>
+        </div>
+        
+        <!-- Options -->
+        <div id="import-options-section" style="display: none; margin: 20px 0; background: var(--bg-table-row-alt); padding: 15px; border-radius: 4px;">
+            <label style="display: flex; align-items: center; margin-bottom: 10px; color: var(--text-primary);">
+                <input type="checkbox" id="replace-all-data" style="margin-right: 8px;">
+                Replace all data (delete existing rows first)
+            </label>
+            <label style="display: flex; align-items: center; margin-bottom: 10px; color: var(--text-primary);">
+                <input type="checkbox" id="skip-duplicates" checked style="margin-right: 8px;">
+                Skip duplicate rows (matching primary key)
+            </label>
+            <label style="display: flex; align-items: center; color: var(--text-primary);">
+                <input type="checkbox" id="dry-run" style="margin-right: 8px;">
+                Dry-run mode (validate but don't save)
+            </label>
+        </div>
+        
+        <!-- Buttons -->
+        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+            <button onclick="closeImportModal()" class="btn" style="background: #95a5a6; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer;">Cancel</button>
+            <button id="import-btn" onclick="confirmImport()" class="btn btn-success" style="display: none; padding: 8px 15px; border-radius: 4px; cursor: pointer;">Import</button>
+        </div>
+    </div>
+</div>
 
 {% if columns %}
 <div class="table-container">
@@ -79,37 +189,7 @@
                         <input type="hidden" name="table_name" value="{{ table_name }}">
                         {% for col in columns %}
                         <td class="add-row-cell">
-                            {% set col_type = col_types.get(col, 'text') %}
-                            {% if loop.first %}
-                                <span class="add-row-label">Auto increment</span>
-                            {% else %}
-                                {% if not allow_add %}
-                                    <span class="add-row-label" style="color: #95a5a6;">No add allowed</span>
-                                {% elif col in lookups %}
-                                    {# LOOKUP FIELD - render as select with + button #}
-                                    <div style="display: flex; gap: 4px;">
-                                        <select name="{{ col }}" class="input-field-add-row">
-                                            <option value="">-- Select {{ col }} --</option>
-                                            {% for opt in lookup_options.get(col, []) %}
-                                            <option value="{{ opt }}">{{ opt }}</option>
-                                            {% endfor %}
-                                        </select>
-                                        <button type="button" class="btn-add-lookup" data-table="{{ table_name }}" data-col="{{ col }}" data-source="{{ lookups[col] }}" title="Add new {{ col }}">+</button>
-                                    </div>
-                                {% elif col_type in ['integer', 'bigint', 'smallint'] %}
-                                    <input type="number" step="1" name="{{ col }}" placeholder="0" class="input-field-add-row">
-                                {% elif col_type in ['numeric', 'decimal', 'double precision', 'real'] %}
-                                    <input type="number" step="any" name="{{ col }}" placeholder="0.0" class="input-field-add-row">
-                                {% elif col_type in ['date'] %}
-                                    <input type="date" name="{{ col }}" class="input-field-add-row">
-                                {% elif col_type in ['timestamp', 'timestamp with time zone', 'timestamp without time zone'] %}
-                                    <input type="datetime-local" name="{{ col }}" class="input-field-add-row">
-                                {% elif col_type == 'boolean' %}
-                                    <input type="checkbox" name="{{ col }}" class="input-checkbox">
-                                {% else %}
-                                    <input type="text" name="{{ col }}" placeholder="Enter value" class="input-field-add-row">
-                                {% endif %}
-                            {% endif %}
+                            {{ render_input_cell(col, columns, col_types, lookups, lookup_options, editable_columns, allow_add, table_name, is_first=loop.first, is_add_form=True) }}
                         </td>
                         {% endfor %}
                         <td class="add-row-cell-actions">
@@ -129,37 +209,7 @@
                     <input type="hidden" name="table_name" value="{{ table_name }}">
                     {% for col in columns %}
                     <td class="add-row-cell">
-                        {% set col_type = col_types.get(col, 'text') %}
-                        {% if loop.first %}
-                            <span class="add-row-label">Auto increment</span>
-                        {% else %}
-                            {% if not allow_add %}
-                                <span class="add-row-label" style="color: #95a5a6;">No add allowed</span>
-                            {% elif col in lookups %}
-                                {# LOOKUP FIELD - render as select with + button #}
-                                <div style="display: flex; gap: 4px;">
-                                    <select name="{{ col }}" class="input-field-add-row">
-                                        <option value="">-- Select {{ col }} --</option>
-                                        {% for opt in lookup_options.get(col, []) %}
-                                        <option value="{{ opt }}">{{ opt }}</option>
-                                        {% endfor %}
-                                    </select>
-                                    <button type="button" class="btn-add-lookup" data-table="{{ table_name }}" data-col="{{ col }}" data-source="{{ lookups[col] }}" title="Add new {{ col }}">+</button>
-                                </div>
-                            {% elif col_type in ['integer', 'bigint', 'smallint'] %}
-                                <input type="number" step="1" name="{{ col }}" placeholder="0" class="input-field-add-row">
-                            {% elif col_type in ['numeric', 'decimal', 'double precision', 'real'] %}
-                                <input type="number" step="any" name="{{ col }}" placeholder="0.0" class="input-field-add-row">
-                            {% elif col_type in ['date'] %}
-                                <input type="date" name="{{ col }}" class="input-field-add-row">
-                            {% elif col_type in ['timestamp', 'timestamp with time zone', 'timestamp without time zone'] %}
-                                <input type="datetime-local" name="{{ col }}" class="input-field-add-row">
-                            {% elif col_type == 'boolean' %}
-                                <input type="checkbox" name="{{ col }}" class="input-checkbox">
-                            {% else %}
-                                <input type="text" name="{{ col }}" placeholder="Enter value" class="input-field-add-row">
-                            {% endif %}
-                        {% endif %}
+                        {{ render_input_cell(col, columns, col_types, lookups, lookup_options, editable_columns, allow_add, table_name, is_first=loop.first, is_add_form=True) }}
                     </td>
                     {% endfor %}
                     <td class="add-row-cell-actions">
@@ -207,14 +257,6 @@
     </select>
 </div>
 
-<script>
-// Handle page size change
-document.getElementById('page-size-select').addEventListener('change', function() {
-    const newPageSize = this.value;
-    window.location.href = `/table/{{ table_name }}?page=1&limit=${newPageSize}`;
-});
-</script>
-
 {% else %}
 <div class="alert alert-error">
     Could not connect to database or table not found.
@@ -243,161 +285,4 @@ document.getElementById('page-size-select').addEventListener('change', function(
     </div>
 </div>
 
-<script>
-// Track newly added lookup values in memory (not yet in DB)
-const newLookupValues = {}; // Format: { "table.column": ["val1", "val2"], ... }
-
-function openLookupModal(sourceTable, columnName, dataCol) {
-    console.log('DEBUG: Opening modal for', sourceTable, columnName);
-    window.currentLookupContext = {
-        sourceTable: sourceTable,
-        columnName: columnName,
-        dataCol: dataCol
-    };
-    
-    document.getElementById('lookup-source-table').value = sourceTable;
-    document.getElementById('lookup-column').value = columnName;
-    document.getElementById('lookup-value').value = '';
-    document.getElementById('lookup-value').focus();
-    document.getElementById('lookup-modal').style.display = 'block';
-}
-
-function closeLookupModal() {
-    document.getElementById('lookup-modal').style.display = 'none';
-    window.currentLookupContext = null;
-}
-
-function submitAddLookup(event) {
-    event.preventDefault();
-    console.log('DEBUG: submitAddLookup called');
-    
-    const sourceTable = document.getElementById('lookup-source-table').value;
-    const columnName = document.getElementById('lookup-column').value;
-    const value = document.getElementById('lookup-value').value;
-    
-    console.log('DEBUG: Adding value in memory:', { sourceTable, columnName, value });
-    
-    // Track this value in memory
-    const key = `${sourceTable}.${columnName}`;
-    if (!newLookupValues[key]) {
-        newLookupValues[key] = [];
-    }
-    if (!newLookupValues[key].includes(value)) {
-        newLookupValues[key].push(value);
-    }
-    
-    // Update ALL select elements for this column to include the new value
-    document.querySelectorAll(`select[name="${columnName}"]`).forEach(select => {
-        // Check if option already exists
-        const exists = Array.from(select.options).some(opt => opt.value === value);
-        if (!exists) {
-            const option = document.createElement('option');
-            option.value = value;
-            option.textContent = value;
-            select.appendChild(option);
-            console.log('DEBUG: Added option to select:', columnName, value);
-        }
-    });
-    
-    // Only auto-select in the row where the user clicked the + button
-    if (window.currentClickedButton) {
-        const selectInForm = window.currentClickedButton.closest('div').querySelector(`select[name="${columnName}"]`);
-        if (selectInForm) {
-            selectInForm.value = value;
-            selectInForm.classList.add('modified');  // Add visual feedback
-            console.log('DEBUG: Auto-selected in clicked row:', columnName, value);
-        }
-    }
-    
-    // Show success message
-    console.log('DEBUG: Success! Showing result.');
-    document.getElementById('form-inputs').style.display = 'none';
-    document.getElementById('modal-add-btn').style.display = 'none';
-    document.getElementById('modal-cancel-btn').textContent = 'OK';
-    document.getElementById('success-value').textContent = value;
-    document.getElementById('modal-success-msg').style.display = 'block';
-    
-    console.log('DEBUG: Modal updated with success message');
-    
-    // Make OK button clickable
-    document.getElementById('modal-cancel-btn').style.pointerEvents = 'auto';
-    document.getElementById('modal-cancel-btn').style.cursor = 'pointer';
-    
-    // Update OK button to close and reset
-    document.getElementById('modal-cancel-btn').onclick = function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        console.log('DEBUG: OK button clicked, closing modal');
-        
-        // Reset the form for next use
-        document.getElementById('form-inputs').style.display = 'block';
-        document.getElementById('modal-add-btn').style.display = 'block';
-        document.getElementById('modal-add-btn').textContent = 'Add';
-        document.getElementById('modal-cancel-btn').textContent = 'Cancel';
-        document.getElementById('modal-cancel-btn').onclick = null;
-        document.getElementById('modal-success-msg').style.display = 'none';
-        
-        closeLookupModal();
-    };
-}
-
-// Attach click handlers to + buttons
-document.addEventListener('DOMContentLoaded', function() {
-    // Add Cancel button handler
-    const cancelBtn = document.getElementById('modal-cancel-btn');
-    if (cancelBtn) {
-        cancelBtn.addEventListener('click', function(e) {
-            console.log('DEBUG: Cancel button clicked');
-            e.preventDefault();
-            e.stopPropagation();
-            closeLookupModal();
-        });
-    }
-    
-    document.querySelectorAll('.btn-add-lookup').forEach(btn => {
-        btn.addEventListener('click', function(event) {
-            console.log('DEBUG: + button clicked');
-            event.preventDefault();
-            event.stopPropagation();
-            const sourceTable = this.dataset.source.split('.')[0];
-            const columnName = this.dataset.col;
-            window.currentClickedButton = this;
-            openLookupModal(sourceTable, columnName, columnName);
-        });
-    });
-});
-
-// Track ANY change to input/select fields - add 'modified' class for visual feedback
-document.addEventListener('change', function(e) {
-    if (e.target.matches('input:not([type="hidden"]), select, textarea')) {
-        e.target.classList.add('modified');
-    }
-}, true);
-
-document.addEventListener('input', function(e) {
-    if (e.target.matches('input:not([type="hidden"]), select, textarea')) {
-        e.target.classList.add('modified');
-    }
-}, true);
-
-// Global form submission tracking - but allow the lookup form through
-document.addEventListener('submit', function(event) {
-    console.log('DEBUG: Form submission attempted on:', event.target.action);
-    
-    // ALLOW the lookup form to submit normally
-    if (event.target.id === 'add-lookup-form') {
-        console.log('DEBUG: Allowing lookup form submission');
-        return true;
-    }
-    
-    const modalOpen = document.getElementById('lookup-modal').style.display === 'block';
-    
-    if (modalOpen) {
-        console.log('DEBUG: BLOCKED - Modal is open!');
-        event.preventDefault();
-        event.stopPropagation();
-        return false;
-    }
-}, true);
-</script>
 {% endblock %}

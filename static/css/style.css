@@ -153,18 +153,7 @@ html.dark-theme .sidebar {
 }
 
 .submenu {
-    margin-left: 15px;
-    list-style: none;
-    margin-top: 5px;
-}
-
-.submenu li {
-    margin-bottom: 5px;
-}
-
-.submenu a {
-    font-size: 14px;
-    padding: 8px 10px;
+    display: none; /* Not used - sidebar doesn't have submenus */
 }
 
 /* Main content */
@@ -243,6 +232,44 @@ html.dark-theme .content-header {
 
 .btn-success:hover {
     background: var(--bg-button-success-hover);
+}
+
+.btn-secondary {
+    background: #7f8c8d;
+    color: white;
+}
+
+.btn-secondary:hover {
+    background: #6c7a7d;
+}
+
+/* Lookup add button */
+.btn-add-lookup {
+    padding: 4px 8px;
+    background: #27ae60;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.2s;
+}
+
+.btn-add-lookup:hover {
+    background: #229954;
+}
+
+.btn-add-lookup:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+html.dark-theme .btn-add-lookup {
+    background: #27ae60 !important;
+}
+
+html.dark-theme .btn-add-lookup:hover {
+    background: #229954 !important;
 }
 
 /* Table row buttons (compact) */
@@ -560,22 +587,6 @@ select.modified {
     text-align: center;
     color: var(--text-secondary);
     padding: 30px;
-}
-
-/* Spinner */
-.spinner {
-    display: inline-block;
-    width: 20px;
-    height: 20px;
-    border: 3px solid #f3f3f3;
-    border-top: 3px solid #3498db;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
 }
 
 /* Login */

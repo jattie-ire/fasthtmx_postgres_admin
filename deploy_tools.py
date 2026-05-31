@@ -333,7 +333,7 @@ def cmd_validate_config(args):
             print_success(f"User table '{fastapi_users_table}' exists")
             
             # Check columns
-            required_cols = {"user", "view", "edit", "add", "delete", "admin", "run_scripts"}
+            required_cols = {"user", "view", "edit", "add", "delete", "admin", "run_scripts", "export_data", "import_data"}
             cursor.execute(
                 "SELECT column_name FROM information_schema.columns WHERE table_name = %s",
                 (fastapi_users_table,)

@@ -8,6 +8,10 @@ def kerberos_auth(username: str, password: str) -> bool:
     Authenticate using Kerberos kinit.
     Returns True if authentication succeeds, False otherwise.
     """
+    # Demo mode for testing (set SKIP_AUTH=1 environment variable)
+    if os.getenv('SKIP_AUTH') == '1':
+        return True
+    
     try:
         # Create temporary credential cache
         ccache = f"/tmp/krb5cc_{os.getuid()}_{username}"

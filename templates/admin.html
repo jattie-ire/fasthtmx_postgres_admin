@@ -193,6 +193,16 @@
     html.dark-theme .CodeMirror-selected {
         background: #3a3a3a !important;
     }
+
+    .masked-field {
+        background: #ffe6e6 !important;
+        color: #c0392b !important;
+    }
+
+    html.dark-theme .masked-field {
+        background: rgba(255, 107, 107, 0.2) !important;
+        color: #ff6b6b !important;
+    }
     
     .button-group {
         margin-top: 15px;
@@ -371,6 +381,16 @@ function loadUsers() {
                                    ${user.run_scripts ? 'checked' : ''} onchange="updateUserPerm('${user.user}')">
                             <label for="run_scripts-${user.user}">Run Scripts</label>
                         </div>
+                        <div class="perm-item">
+                            <input type="checkbox" class="perm-checkbox" id="export_data-${user.user}" 
+                                   ${user.export_data ? 'checked' : ''} onchange="updateUserPerm('${user.user}')">
+                            <label for="export_data-${user.user}">Export Data</label>
+                        </div>
+                        <div class="perm-item">
+                            <input type="checkbox" class="perm-checkbox" id="import_data-${user.user}" 
+                                   ${user.import_data ? 'checked' : ''} onchange="updateUserPerm('${user.user}')">
+                            <label for="import_data-${user.user}">Import Data</label>
+                        </div>
                     </div>
                 `;
                 
@@ -390,6 +410,8 @@ function updateUserPerm(username) {
     formData.append('delete', document.getElementById(`delete-${username}`).checked);
     formData.append('admin', document.getElementById(`admin-${username}`).checked);
     formData.append('run_scripts', document.getElementById(`run_scripts-${username}`).checked);
+    formData.append('export_data', document.getElementById(`export_data-${username}`).checked);
+    formData.append('import_data', document.getElementById(`import_data-${username}`).checked);
     
     fetch(`/api/admin/users/${username}`, {
         method: 'POST',
@@ -409,6 +431,28 @@ function updateUserPerm(username) {
 }
 
 let configEditor = null;
+let sensitiveValues = {};  // Store original password/user values
+
+function maskSensitiveValues(content) {
+    sensitiveValues = {};
+    let masked = content;
+    
+    const sensitivePattern = /(\s*)(password|user)(\s*=\s*)"([^"]*)"/gim;
+    let match;
+    
+    while ((match = sensitivePattern.exec(content)) !== null) {
+        const key = match[2].toLowerCase();
+        const value = match[4];
+        sensitiveValues[key] = value;
+        
+        const maskedValue = '•'.repeat(Math.min(value.length, 15));
+        const original = match[0];
+        const replacement = match[1] + match[2] + match[3] + '"' + maskedValue + '"';
+        masked = masked.replace(original, replacement);
+    }
+    
+    return masked;
+}
 
 function initEditor() {
     const container = document.getElementById('editor-container');
@@ -443,7 +487,8 @@ function loadConfig() {
                 configEditor.setValue('');
                 return;
             }
-            configEditor.setValue(data.config);
+            const maskedConfig = maskSensitiveValues(data.config);
+            configEditor.setValue(maskedConfig);
         })
         .catch(err => {
             showError('config', 'Failed to load config: ' + err);
@@ -453,7 +498,20 @@ function loadConfig() {
 
 
 function saveConfig() {
-    const content = configEditor.getValue();
+    let content = configEditor.getValue();
+    
+    // Restore sensitive values if they haven't been modified
+    for (const [key, originalValue] of Object.entries(sensitiveValues)) {
+        const maskedValue = '•'.repeat(Math.min(originalValue.length, 15));
+        const checkPattern = new RegExp(`(\\s*${key}\\s*=\\s*)"${maskedValue}"`, 'gim');
+        
+        if (checkPattern.test(content)) {
+            content = content.replace(
+                new RegExp(`(^\\s*${key}\\s*=\\s*)"[^"]*"`, 'gim'),
+                `$1"${originalValue}"`
+            );
+        }
+    }
     
     fetch('/api/admin/config', {
         method: 'POST',
@@ -468,6 +526,7 @@ function saveConfig() {
             showError('config', data.error);
         } else {
             showSuccess('config', data.message);
+            setTimeout(() => loadConfig(), 1000);
         }
     })
     .catch(err => {

@@ -1,7 +1,8 @@
 """FastAPI Admin Dashboard - Main Application"""
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from psycopg2.extras import RealDictCursor
 from pathlib import Path
 import subprocess
@@ -37,11 +38,31 @@ from database import (
     generate_lookups_for_table,
     get_user_permissions,
     ensure_user_exists,
+    export_table_to_csv,
+    export_table_to_excel,
+    insert_imported_rows,
 )
 from templates import render_template
 from database import initialize_connection_pool
 
 app = FastAPI()
+
+# ============================================================================
+# HTTP CACHING MIDDLEWARE
+# ============================================================================
+
+class CacheHeaderMiddleware(BaseHTTPMiddleware):
+    """Add cache headers for static assets"""
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Cache static files for 24 hours (86400 seconds)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "public, max-age=86400"
+        
+        return response
+
+app.add_middleware(CacheHeaderMiddleware)
 
 # Mount static files
 static_dir = Path(__file__).parent / "static"
@@ -264,7 +285,7 @@ async def api_get_users(request: Request):
     
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        query = f'SELECT "user", email, view, edit, add, delete, admin, run_scripts FROM {FASTAPI_USERS_TABLE} ORDER BY "user"'
+        query = f'SELECT "user", email, view, edit, add, delete, admin, run_scripts, export_data, import_data FROM {FASTAPI_USERS_TABLE} ORDER BY "user"'
         cursor.execute(query)
         users = cursor.fetchall()
         cursor.close()
@@ -304,9 +325,11 @@ async def api_update_user(user_to_edit: str, request: Request):
         delete = form_data.get('delete') == 'on' or form_data.get('delete') == 'true'
         admin = form_data.get('admin') == 'on' or form_data.get('admin') == 'true'
         run_scripts = form_data.get('run_scripts') == 'on' or form_data.get('run_scripts') == 'true'
+        export_data = form_data.get('export_data') == 'on' or form_data.get('export_data') == 'true'
+        import_data = form_data.get('import_data') == 'on' or form_data.get('import_data') == 'true'
         
-        update_query = f'UPDATE {FASTAPI_USERS_TABLE} SET view = %s, edit = %s, add = %s, delete = %s, admin = %s, run_scripts = %s WHERE "user" = %s'
-        cursor.execute(update_query, (view, edit, add, delete, admin, run_scripts, user_to_edit))
+        update_query = f'UPDATE {FASTAPI_USERS_TABLE} SET view = %s, edit = %s, add = %s, delete = %s, admin = %s, run_scripts = %s, export_data = %s, import_data = %s WHERE "user" = %s'
+        cursor.execute(update_query, (view, edit, add, delete, admin, run_scripts, export_data, import_data, user_to_edit))
         conn.commit()
         cursor.close()
         conn.close()
@@ -720,6 +743,9 @@ async def get_table_data_route(table_name: str, request: Request, page: int = 1,
         "has_next": has_next,
         "prev_page": page - 1,
         "next_page": page + 1,
+        # Export/Import permissions
+        "can_export": user_perms.get('export_data', False),
+        "can_import": user_perms.get('import_data', False),
     })
     return html
 
@@ -985,6 +1011,393 @@ async def api_execute_script(script_name: str, request: Request):
     result = execute_script_internal(script_name)
     result["message"] = "Script executed successfully" if result.get("success") else "Script completed with errors"
     return result
+
+
+# ============================================================================
+# IMPORT/EXPORT ENDPOINTS
+# ============================================================================
+
+@app.get("/export-table/{table_name}")
+async def export_table(table_name: str, request: Request, format: str = "csv"):
+    """Export table data as CSV or Excel"""
+    username = request.cookies.get("username")
+    if not username:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    
+    # Check permissions
+    user_perms = get_user_permissions(username)
+    if not user_perms.get('view', False):
+        return JSONResponse({"error": "You do not have permission to view tables"}, status_code=403)
+    
+    if not user_perms.get('export_data', False):
+        return JSONResponse({"error": "You do not have permission to export data"}, status_code=403)
+    
+    # Validate table name
+    available_tables = get_available_tables()
+    if table_name not in available_tables:
+        return JSONResponse({"error": f"Table '{table_name}' not found"}, status_code=404)
+    
+    try:
+        if format.lower() == "csv":
+            data = export_table_to_csv(table_name)
+            return StreamingResponse(
+                iter([data]),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={table_name}.csv"}
+            )
+        elif format.lower() == "xlsx":
+            data = export_table_to_excel(table_name)
+            return StreamingResponse(
+                iter([data]),
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename={table_name}.xlsx"}
+            )
+        else:
+            return JSONResponse({"error": f"Unsupported format: {format}"}, status_code=400)
+    
+    except Exception as e:
+        print(f"ERROR exporting table {table_name}: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": f"Export failed: {str(e)}"}, status_code=500)
+
+
+@app.post("/api/import-preview/{table_name}")
+async def import_preview(table_name: str, request: Request):
+    """Preview imported file (show first 5 rows, validate, check for duplicates)"""
+    from database import validate_import_row, get_table_columns
+    import csv
+    import io
+    
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated", "status": "error"}
+    
+    # Check permissions
+    user_perms = get_user_permissions(username)
+    if not user_perms.get('import_data', False):
+        return {"error": "You do not have permission to import data", "status": "error"}
+    
+    # Validate table name
+    available_tables = get_available_tables()
+    if table_name not in available_tables:
+        return {"error": f"Table '{table_name}' not found", "status": "error"}
+    
+    try:
+        # Get uploaded file
+        form = await request.form()
+        file = form.get("file")
+        
+        if not file:
+            return {"error": "No file uploaded", "status": "error"}
+        
+        # Read file content
+        content = await file.read()
+        file_type = file.filename.split('.')[-1].lower()
+        
+        rows = []
+        columns = []
+        
+        if file_type == 'csv':
+            # Parse CSV
+            content_str = content.decode('utf-8')
+            reader = csv.DictReader(io.StringIO(content_str))
+            columns = reader.fieldnames or []
+            rows = list(reader)
+        
+        elif file_type == 'xlsx':
+            # Parse Excel - with fallback for style parsing errors
+            try:
+                from openpyxl import load_workbook
+                wb = load_workbook(io.BytesIO(content), data_only=True)
+                ws = wb.active
+                
+                # Read header - get all values from first row
+                columns = []
+                for cell in ws[1]:
+                    if cell.value is not None:
+                        columns.append(str(cell.value))
+                    else:
+                        break  # Stop at first empty cell
+                
+                # Read rows
+                for row_idx in range(2, ws.max_row + 1):
+                    row_dict = {}
+                    has_data = False
+                    for col_idx, col_name in enumerate(columns, 1):
+                        cell_value = ws.cell(row=row_idx, column=col_idx).value
+                        row_dict[col_name] = cell_value
+                        if cell_value is not None:
+                            has_data = True
+                    if has_data:  # Only add rows with data
+                        rows.append(row_dict)
+            except Exception as excel_error:
+                # Fallback: parse Excel as ZIP to extract data without loading styles
+                import zipfile
+                import xml.etree.ElementTree as ET
+                try:
+                    with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                        # Read shared strings first
+                        shared_strings = []
+                        try:
+                            strings_xml = zf.read('xl/sharedStrings.xml')
+                            strings_root = ET.fromstring(strings_xml)
+                            for si_elem in strings_root.findall('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si'):
+                                t_elem = si_elem.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t')
+                                if t_elem is not None and t_elem.text:
+                                    shared_strings.append(t_elem.text)
+                        except:
+                            pass  # No shared strings or error reading them
+                        
+                        # Read the worksheet XML
+                        sheet_names = [n for n in zf.namelist() if n.startswith('xl/worksheets/sheet')]
+                        if not sheet_names:
+                            return {"error": "No worksheets found in Excel file", "status": "error"}
+                        
+                        sheet_xml = zf.read(sheet_names[0])
+                        root = ET.fromstring(sheet_xml)
+                        
+                        # Parse rows
+                        rows_elem = root.findall('.//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row')
+                        columns = []
+                        
+                        for row_idx, row_elem in enumerate(rows_elem):
+                            row_dict = {}
+                            cells = row_elem.findall('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c')
+                            
+                            for col_idx, cell_elem in enumerate(cells):
+                                # Get cell type
+                                cell_type = cell_elem.get('t', 'n')  # Default to number type
+                                
+                                # Get cell value
+                                value_elem = cell_elem.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v')
+                                value = value_elem.text if value_elem is not None else None
+                                
+                                # If type is 's', it's a string index - look it up in shared strings
+                                if cell_type == 's' and value is not None:
+                                    try:
+                                        str_idx = int(value)
+                                        if str_idx < len(shared_strings):
+                                            value = shared_strings[str_idx]
+                                    except:
+                                        pass
+                                
+                                if row_idx == 0:  # Header row
+                                    if value:
+                                        columns.append(str(value))
+                                else:  # Data rows
+                                    if col_idx < len(columns):
+                                        row_dict[columns[col_idx]] = value
+                            
+                            if row_idx > 0 and row_dict:  # Skip header, skip empty rows
+                                rows.append(row_dict)
+                except Exception as fallback_error:
+                    return {"error": f"Failed to parse Excel file: {str(fallback_error)}", "status": "error"}
+        
+        else:
+            return {"error": f"Unsupported file format: {file_type}", "status": "error"}
+        
+        # Preview: show first 20 rows + validation
+        preview_rows = []
+        validation_errors = []
+        validation_warnings = []
+        duplicate_count = 0
+        
+        for row_idx, row in enumerate(rows[:20], 1):
+            is_valid, errors, warnings = validate_import_row(table_name, row)
+            preview_rows.append({
+                'data': row,
+                'valid': is_valid,
+                'errors': errors,
+                'warnings': warnings
+            })
+            validation_errors.extend([f"Row {row_idx}: {e}" for e in errors])
+            validation_warnings.extend([f"Row {row_idx}: {w}" for w in warnings])
+        
+        # Check for total rows and duplicates
+        total_rows = len(rows)
+        
+        return {
+            "status": "ok",
+            "filename": file.filename,
+            "file_type": file_type,
+            "columns": columns,
+            "total_rows": total_rows,
+            "preview_rows": preview_rows,
+            "validation_errors": validation_errors,
+            "validation_warnings": validation_warnings,
+            "message": f"Preview loaded: {total_rows} rows, {len(columns)} columns"
+        }
+    
+    except Exception as e:
+        print(f"ERROR in import preview: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": f"Preview failed: {str(e)}", "status": "error"}
+
+
+@app.post("/api/import-execute/{table_name}")
+async def import_execute(table_name: str, request: Request):
+    """Execute import (insert rows with validation and duplicate handling)"""
+    from database import insert_imported_rows
+    import csv
+    import io
+    
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated", "status": "error"}
+    
+    # Check permissions
+    user_perms = get_user_permissions(username)
+    if not user_perms.get('import_data', False):
+        return {"error": "You do not have permission to import data", "status": "error"}
+    
+    # Validate table name
+    available_tables = get_available_tables()
+    if table_name not in available_tables:
+        return {"error": f"Table '{table_name}' not found", "status": "error"}
+    
+    try:
+        # Get form data
+        form = await request.form()
+        file = form.get("file")
+        replace_all = form.get("replace_all", "false").lower() == "true"
+        skip_duplicates = form.get("skip_duplicates", "true").lower() == "true"
+        dry_run = form.get("dry_run", "false").lower() == "true"
+        
+        if not file:
+            return {"error": "No file uploaded", "status": "error"}
+        
+        # Read file content
+        content = await file.read()
+        file_type = file.filename.split('.')[-1].lower()
+        
+        rows = []
+        
+        if file_type == 'csv':
+            # Parse CSV
+            content_str = content.decode('utf-8')
+            reader = csv.DictReader(io.StringIO(content_str))
+            rows = list(reader)
+        
+        elif file_type == 'xlsx':
+            # Parse Excel - with fallback for style parsing errors
+            try:
+                from openpyxl import load_workbook
+                wb = load_workbook(io.BytesIO(content), data_only=True)
+                ws = wb.active
+                
+                # Read header - get all values from first row
+                columns = []
+                for cell in ws[1]:
+                    if cell.value is not None:
+                        columns.append(str(cell.value))
+                    else:
+                        break  # Stop at first empty cell
+                
+                # Read rows
+                for row_idx in range(2, ws.max_row + 1):
+                    row_dict = {}
+                    has_data = False
+                    for col_idx, col_name in enumerate(columns, 1):
+                        cell_value = ws.cell(row=row_idx, column=col_idx).value
+                        row_dict[col_name] = cell_value
+                        if cell_value is not None:
+                            has_data = True
+                    if has_data:  # Only add rows with data
+                        rows.append(row_dict)
+            except Exception as excel_error:
+                # Fallback: parse Excel as ZIP to extract data without loading styles
+                import zipfile
+                import xml.etree.ElementTree as ET
+                try:
+                    with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                        # Read shared strings first
+                        shared_strings = []
+                        try:
+                            strings_xml = zf.read('xl/sharedStrings.xml')
+                            strings_root = ET.fromstring(strings_xml)
+                            for si_elem in strings_root.findall('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si'):
+                                t_elem = si_elem.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t')
+                                if t_elem is not None and t_elem.text:
+                                    shared_strings.append(t_elem.text)
+                        except:
+                            pass  # No shared strings or error reading them
+                        
+                        # Read the worksheet XML
+                        sheet_names = [n for n in zf.namelist() if n.startswith('xl/worksheets/sheet')]
+                        if not sheet_names:
+                            return {"error": "No worksheets found in Excel file", "status": "error"}
+                        
+                        sheet_xml = zf.read(sheet_names[0])
+                        root = ET.fromstring(sheet_xml)
+                        
+                        # Parse rows
+                        rows_elem = root.findall('.//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row')
+                        columns = []
+                        
+                        for row_idx, row_elem in enumerate(rows_elem):
+                            row_dict = {}
+                            cells = row_elem.findall('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c')
+                            
+                            for col_idx, cell_elem in enumerate(cells):
+                                # Get cell type
+                                cell_type = cell_elem.get('t', 'n')  # Default to number type
+                                
+                                # Get cell value
+                                value_elem = cell_elem.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v')
+                                value = value_elem.text if value_elem is not None else None
+                                
+                                # If type is 's', it's a string index - look it up in shared strings
+                                if cell_type == 's' and value is not None:
+                                    try:
+                                        str_idx = int(value)
+                                        if str_idx < len(shared_strings):
+                                            value = shared_strings[str_idx]
+                                    except:
+                                        pass
+                                
+                                if row_idx == 0:  # Header row
+                                    if value:
+                                        columns.append(str(value))
+                                else:  # Data rows
+                                    if col_idx < len(columns):
+                                        row_dict[columns[col_idx]] = value
+                            
+                            if row_idx > 0 and row_dict:  # Skip header, skip empty rows
+                                rows.append(row_dict)
+                except Exception as fallback_error:
+                    return {"error": f"Failed to parse Excel file: {str(fallback_error)}", "status": "error"}
+        
+        else:
+            return {"error": f"Unsupported file format: {file_type}", "status": "error"}
+        
+        # Execute import
+        result = insert_imported_rows(table_name, rows, skip_duplicates=skip_duplicates, dry_run=dry_run, replace_all=replace_all)
+        
+        # Format response
+        message_parts = [f"Inserted: {result['inserted']}"]
+        if skip_duplicates and result['skipped'] > 0:
+            message_parts.append(f"Skipped: {result['skipped']} (duplicates)")
+        
+        if dry_run:
+            message_parts.append("(DRY-RUN MODE - data not saved)")
+        
+        return {
+            "status": "ok",
+            "message": ", ".join(message_parts),
+            "inserted": result['inserted'],
+            "skipped": result['skipped'],
+            "errors": result['errors'],
+            "warnings": result['warnings'],
+            "dry_run": dry_run
+        }
+    
+    except Exception as e:
+        print(f"ERROR in import execute: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": f"Import failed: {str(e)}", "status": "error"}
 
 
 if __name__ == "__main__":
