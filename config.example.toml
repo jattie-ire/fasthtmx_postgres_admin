@@ -7,6 +7,8 @@ password = "your_db_password"
 [app]
 # User management table - stores user permissions (view, edit, add, delete, admin, run_scripts, export_data, import_data)
 fastapi_users_table = "fastapi_users"
+# Kerberos domain for authentication
+kerberos_domain = "YOUR.DOMAIN"
 
 [tables]
 include = ["table_prefix_.*"]
@@ -39,3 +41,10 @@ script_name_2 = "/path/to/another_script.sh"
 # Define permissions per table (combined with user-level permissions from fastapi_users table)
 table_name = { allow_add = true, allow_delete = true, editable_columns = ["column1", "column2"] }
 another_table = { allow_add = false, allow_delete = false, editable_columns = ["status_column"] }
+
+[deploy_tools]
+# Default permissions for auto-generated table configs
+default_allow_add = true
+default_allow_delete = true
+# Automatically identify text columns as editable
+auto_detect_text_columns = true

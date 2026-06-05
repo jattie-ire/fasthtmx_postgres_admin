@@ -32,6 +32,11 @@ jinja_env.filters['format_datetime'] = format_datetime
 def render_template(template_name: str, context: dict) -> str:
     """Render a Jinja2 template"""
     try:
+        # Add kerberos_domain from config if not already in context
+        if 'kerberos_domain' not in context:
+            from config import KERBEROS_DOMAIN
+            context['kerberos_domain'] = KERBEROS_DOMAIN
+        
         template = jinja_env.get_template(template_name)
         return template.render(**context)
     except Exception as e:

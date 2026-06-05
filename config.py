@@ -44,8 +44,14 @@ APP_CONFIG = config.get("app", {})
 # User management table name
 FASTAPI_USERS_TABLE = APP_CONFIG.get("fastapi_users_table", "fastapi_users")
 
+# Kerberos domain for authentication
+KERBEROS_DOMAIN = APP_CONFIG.get("kerberos_domain", "FASTHTMX.LOCAL")
+
 # Scripts config from TOML
 SCRIPTS_CONFIG = config.get("scripts", {})
+
+# Deploy tools config from TOML
+DEPLOY_TOOLS_CONFIG = config.get("deploy_tools", {})
 
 # Table permissions config from TOML
 TABLE_PERMISSIONS = config.get("table_permissions", {})

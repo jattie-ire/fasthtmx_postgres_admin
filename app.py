@@ -430,6 +430,27 @@ async def api_update_config(request: Request):
         return {"error": str(e)}
 
 
+@app.get("/api/admin/reload-config")
+async def api_reload_config(request: Request):
+    """Reload configuration from disk"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    user_perms = get_user_permissions(username)
+    if not is_user_admin(user_perms):
+        return {"error": "Admin privileges required"}
+    
+    try:
+        from config import reload_config
+        reload_config()
+        print(f"Config reloaded by {username}")
+        return {"success": True, "message": "Configuration reloaded from disk"}
+    except Exception as e:
+        print(f"ERROR reloading config: {e}")
+        return {"error": f"Failed to reload config: {str(e)}"}
+
+
 @app.get("/logout", response_class=HTMLResponse)
 async def logout(request: Request):
     """Logout endpoint - clear session and redirect to login"""

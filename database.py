@@ -399,6 +399,10 @@ def ensure_user_exists(username: str) -> bool:
             print(f"✓ User '{username}' already exists in {FASTAPI_USERS_TABLE}")
             cursor.close()
             return_db_connection(conn)
+        
+        # Get total user count to determine if this is the first user
+        total_query = f'SELECT COUNT(*) as cnt FROM {FASTAPI_USERS_TABLE}'
+        cursor.execute(total_query)
         total_result = cursor.fetchone()
         total_users = total_result['cnt'] if total_result else 0
         

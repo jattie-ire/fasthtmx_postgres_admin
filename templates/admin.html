@@ -535,8 +535,22 @@ function saveConfig() {
 }
 
 function reloadConfig() {
-    configEditor.setValue('Loading...');
-    loadConfig();
+    // Reload config from disk on the backend
+    fetch('/api/admin/reload-config')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                showError('config', 'Failed to reload config: ' + data.error);
+            } else {
+                showSuccess('config', data.message);
+                // Also reload the config in the editor
+                configEditor.setValue('Loading...');
+                loadConfig();
+            }
+        })
+        .catch(err => {
+            showError('config', 'Failed to reload config: ' + err);
+        });
 }
 
 function downloadBackup() {

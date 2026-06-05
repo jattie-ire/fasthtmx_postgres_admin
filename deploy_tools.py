@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
 # Import from project
-from config import DB_CONFIG, TABLE_PERMISSIONS, SCRIPTS_CONFIG
+from config import DB_CONFIG, TABLE_PERMISSIONS, SCRIPTS_CONFIG, DEPLOY_TOOLS_CONFIG, config, load_config
 from database import get_db_connection, return_db_connection, get_available_tables
 import psycopg2
 
@@ -383,6 +383,8 @@ def cmd_generate_config(args):
     Auto-generate configuration section for all discovered tables.
     
     Creates a [table_permissions] section with sensible defaults.
+    Uses the [tables] include/exclude filters from config.toml if available.
+    Default permissions are configurable via [deploy_tools] section in config.toml.
     Useful for:
         - Starting a new config.toml
         - Adding new tables discovered after deployment
@@ -393,15 +395,15 @@ def cmd_generate_config(args):
         python deploy_tools.py generate-config --output new.toml  # Save to file
         python deploy_tools.py generate-config --read-only        # No edit/add/delete
     
-    Default permissions:
-        - All tables: allow_view = true
-        - All tables: allow_add = false (review before enabling)
-        - All tables: allow_delete = false (review before enabling)
-        - No editable columns (review before enabling)
+    Default permissions (configurable in [deploy_tools] section):
+        - allow_add: defaults to value in config.toml [deploy_tools] (default: true)
+        - allow_delete: defaults to value in config.toml [deploy_tools] (default: true)
+        - Text columns: auto-detected as editable if enabled in config.toml
     """
     print_header("Generating Configuration from Database Tables")
     
     try:
+        import re
         conn = get_db_connection()
         if not conn:
             print_error("Failed to connect to database")
@@ -415,24 +417,91 @@ def cmd_generate_config(args):
             ORDER BY tablename
         """)
         
-        tables = [row[0] for row in cursor.fetchall()]
+        all_tables = [row[0] for row in cursor.fetchall()]
+        
+        # Apply include/exclude filters from config
+        include_pattern = TABLE_PERMISSIONS.get('include', ['.*'])  if isinstance(TABLE_PERMISSIONS, dict) else ['.*']
+        exclude_pattern = TABLE_PERMISSIONS.get('exclude', []) if isinstance(TABLE_PERMISSIONS, dict) else []
+        
+        # Load from config if available
+        if 'tables' in config:
+            table_config = config.get('tables', {})
+            if isinstance(table_config, dict):
+                include_pattern = table_config.get('include', ['.*'])
+                exclude_pattern = table_config.get('exclude', [])
+        
+        # Filter tables based on patterns
+        tables = []
+        for table in all_tables:
+            # Check include patterns
+            included = False
+            for pattern in include_pattern:
+                if re.match(pattern, table):
+                    included = True
+                    break
+            
+            if not included:
+                continue
+            
+            # Check exclude patterns
+            excluded = False
+            for pattern in exclude_pattern:
+                if re.match(pattern, table):
+                    excluded = True
+                    break
+            
+            if not excluded:
+                tables.append(table)
+        
+        if not tables:
+            print_warning("No tables found matching configured filters")
+            return 1
+        
+        print(f"Found {len(tables)} table(s) matching configured filters.\n")
+        
+        # Get column information for each table
+        table_columns = {}
+        for table in tables:
+            cursor.execute(f"""
+                SELECT column_name, data_type FROM information_schema.columns 
+                WHERE table_name = %s AND table_schema = 'public'
+                ORDER BY ordinal_position
+            """, (table,))
+            table_columns[table] = cursor.fetchall()
+        
         cursor.close()
         return_db_connection(conn)
         
-        if not tables:
-            print_warning("No tables found in database")
-            return 1
-        
-        print(f"Found {len(tables)} tables. Generating config...\n")
-        
-        # Generate TOML
+        # Generate TOML with enhanced defaults
         toml_lines = ["[table_permissions]\n"]
+        
+        # Get defaults from config
+        default_allow_add = DEPLOY_TOOLS_CONFIG.get("default_allow_add", True)
+        default_allow_delete = DEPLOY_TOOLS_CONFIG.get("default_allow_delete", True)
+        auto_detect_text = DEPLOY_TOOLS_CONFIG.get("auto_detect_text_columns", True)
         
         for table in tables:
             toml_lines.append(f"[table_permissions.{table}]")
-            toml_lines.append(f'allow_add = false  # Review and enable if needed')
-            toml_lines.append(f'allow_delete = false  # Review and enable if needed')
-            toml_lines.append(f'editable_columns = []  # Add column names to allow editing')
+            toml_lines.append(f'allow_add = {str(default_allow_add).lower()}  # Review and adjust if needed')
+            toml_lines.append(f'allow_delete = {str(default_allow_delete).lower()}  # Review and adjust if needed')
+            
+            # Identify text columns for editable_columns if enabled
+            text_columns = []
+            if auto_detect_text:
+                columns = table_columns.get(table, [])
+                for col_name, col_type in columns:
+                    # Skip primary key columns (usually id, pk, etc.)
+                    if col_name.lower() in ['id', 'pk', 'oid', 'rowid']:
+                        continue
+                    # Include text-like columns
+                    if col_type in ['character varying', 'text', 'varchar', 'char']:
+                        text_columns.append(col_name)
+            
+            if text_columns:
+                toml_lines.append(f'editable_columns = {text_columns}  # Text columns - consider as dropdown lookups')
+            else:
+                toml_lines.append(f'editable_columns = []  # Add column names to allow editing')
+            
             toml_lines.append("")
         
         toml_content = "\n".join(toml_lines)
@@ -443,21 +512,24 @@ def cmd_generate_config(args):
             output_path.write_text(toml_content)
             print_success(f"Config generated and saved to: {output_path}")
             print(f"\nGenerated configuration for {len(tables)} table(s)")
+            print(f"Filtered using patterns from config.toml [tables] section")
             print(f"File size: {len(toml_content)} bytes")
             print(f"\nNext steps:")
             print(f"  1. Review the file: {args.output}")
-            print(f"  2. Enable allow_add/allow_delete where appropriate")
-            print(f"  3. Add editable_columns for tables that allow editing")
+            print(f"  2. Disable allow_add/allow_delete where not needed")
+            print(f"  3. Map text columns to lookup tables in [lookups] section")
             print(f"  4. Merge into your config.toml [table_permissions] section\n")
         else:
             print(toml_content)
-            print(f"\n# Generated for {len(tables)} table(s)")
+            print(f"\n# Generated for {len(tables)} table(s) matching configured filters")
             print(f"# Use --output <file> to save to a file\n")
         
         return 0
         
     except Exception as e:
         print_error(f"Failed to generate config: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}FastAPI HTMX App{% endblock %}</title>
     <script src="https://unpkg.com/htmx.org"></script>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v={{ range(1, 999999) | random }}">
     {% block extra_css %}{% endblock %}
     <script>
         // Load saved theme preference
@@ -44,7 +44,7 @@
         <div class="content-header">
             <h2>{% block page_title %}Page{% endblock %}</h2>
             <div class="user-info">
-                Logged in as: <strong>{{ username }}@FASTHTMX.LOCAL</strong>
+                Logged in as: <strong>{{ username }}@{{ kerberos_domain }}</strong>
             </div>
         </div>
         <div id="content" style="background: var(--bg-content); padding: 20px; border-radius: 8px; box-shadow: var(--shadow); transition: background 0.3s, color 0.3s; color: var(--text-primary);">

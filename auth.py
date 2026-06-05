@@ -1,6 +1,7 @@
 """Authentication functions"""
 import subprocess
 import os
+from config import KERBEROS_DOMAIN
 
 
 def kerberos_auth(username: str, password: str) -> bool:
@@ -18,9 +19,9 @@ def kerberos_auth(username: str, password: str) -> bool:
         env = os.environ.copy()
         env["KRB5CCNAME"] = ccache
         
-        # Run kinit with username and password
+        # Run kinit with username and password using configured domain
         process = subprocess.Popen(
-            ["kinit", f"{username}@FASTHTMX.LOCAL"],
+            ["kinit", f"{username}@{KERBEROS_DOMAIN}"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
