@@ -94,7 +94,8 @@ python deploy_tools.py validate-config
 - ✓ All `editable_columns` exist in their respective tables
 - ✓ All scripts defined in `[scripts]` are accessible on disk
 - ✓ `fastapi_users` table exists with correct schema
-- ✓ User table has all required columns: `user`, `view`, `edit`, `add`, `delete`, `admin`, `run_scripts`
+- ✓ User table has all required columns: `user`, `view`, `edit`, `add`, `delete`, `admin`, `run_scripts`, `export_data`, `import_data`
+- ✓ Audit trail table configuration is valid (will be created on app startup if configured)
 
 **Output example:**
 ```
@@ -321,6 +322,102 @@ python deploy_tools.py discover-tables --help
 python deploy_tools.py validate-config --help
 python deploy_tools.py generate-config --help
 ```
+
+---
+
+## New Features & Configuration
+
+### 1. Audit Trail Setup
+
+**What it does**: Automatically logs all INSERT, UPDATE, DELETE operations on managed tables.
+
+**Configuration (in config.toml)**:
+```toml
+[audit_trail]
+table_name = "fastapi_audit_trail"  # Optional; uses this name for the audit table
+```
+
+**Deployment considerations**:
+- Audit table is automatically created on app startup if it doesn't exist
+- Runs `CREATE TABLE IF NOT EXISTS`, so safe to deploy on existing databases
+- Audit trail reference format: `table_name:id=primary_key_value` (e.g., `i07_concession_hours:id=42`)
+- No configuration needed; just ensure audit trail section exists in config.toml
+
+**Verification**:
+- After app starts, verify audit table: `SELECT * FROM fastapi_audit_trail;`
+- Query audited operations: `SELECT * FROM fastapi_audit_trail WHERE action='UPDATE';`
+
+### 2. Custom Table Display Names
+
+**What it does**: Shows friendly names for tables in the Edit Tables dropdown instead of table names.
+
+**Configuration (in config.toml)**:
+```toml
+[table_permissions.i07_concession_hours]
+display_name = "Concession Hours"  # Optional; defaults to table name if omitted
+allow_add = true
+allow_delete = true
+editable_columns = ["concession_hours"]
+```
+
+**Deployment notes**:
+- Backward compatible; tables without display_name show table name
+- Set via `[table_permissions.TABLE_NAME]` sections
+- Each table's display name is independent
+
+### 3. Customizable Kerberos Login Text
+
+**What it does**: Allows customization of login page header and input placeholders.
+
+**Configuration (in config.toml)**:
+```toml
+[kerberos_login]
+header_text = "Company Portal Login"
+username_placeholder = "Domain Username"
+password_placeholder = "Kerberos Password"
+```
+
+**Deployment notes**:
+- All fields are optional; falls back to defaults if not set
+- Defaults: "Kerberos Login", "Username", "Password"
+- Changes take effect immediately on app reload
+
+### 4. User Deletion (Admin Only)
+
+**What it does**: Allows admins to delete users from the Admin Panel.
+
+**Security**:
+- Only users with admin=true can delete users
+- Non-admins cannot access DELETE endpoint
+- Deletes user from `fastapi_users` table and revokes all permissions
+
+**Deployment notes**:
+- No configuration needed
+- Automatic protection based on admin flag in user record
+- Endpoint: `DELETE /api/admin/users/{username}`
+
+### 5. Background Script Execution
+
+**What it does**: Execute long-running scripts asynchronously with real-time status updates.
+
+**Configuration (in config.toml)**):
+```toml
+[scripts]
+my_script = "/path/to/script.sh"
+my_script_run_in_background = true  # Optional; enable async execution
+```
+
+**Deployment notes**:
+- Scripts without `_run_in_background = true` run synchronously (old behavior)
+- Job tracking is in-memory; jobs lost on app restart
+- Old jobs (>1 hour) are auto-cleaned up
+- Polling interval: 2 seconds (hardcoded, customizable in frontend)
+
+**User experience**:
+- Toast notification on script start
+- Sidebar shows running script count
+- Results page polls for status updates
+- Toast on completion
 
 ---
 

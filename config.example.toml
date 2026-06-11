@@ -34,13 +34,43 @@ table_name = ["column1", "column2"]
 another_table = ["lookup_column"]
 
 [scripts]
-script_name_1 = "/path/to/script.sh"
-script_name_2 = "/path/to/another_script.sh"
+# Script names map to their paths
+"Script Name 1" = "/path/to/script.sh"
+"Script Name 2" = "/path/to/another_script.sh"
 
-[table_permissions]
-# Define permissions per table (combined with user-level permissions from fastapi_users table)
-table_name = { allow_add = true, allow_delete = true, editable_columns = ["column1", "column2"] }
-another_table = { allow_add = false, allow_delete = false, editable_columns = ["status_column"] }
+[scripts.run_in_background]
+# Optional: specify which scripts should run in the background
+# "Script Name 2" = true
+
+[table_permissions.table_name]
+# Optional: custom display name for this table in the Edit Tables dropdown (if not set, table_name is used)
+# display_name = "Custom Table Name"
+allow_add = true
+allow_delete = true
+editable_columns = ["column1", "column2"]
+
+[table_permissions.another_table]
+allow_add = false
+allow_delete = false
+editable_columns = ["status_column"]
+
+[kerberos_login]
+# Customizable login page text and validation messages
+header_text = "Kerberos Login"
+username_placeholder = "Employee ID"
+password_placeholder = "Password"
+# Hover/required field validation messages (shown as tooltips)
+username_required_message = "Please enter your employee ID"
+password_required_message = "Please enter your domain password"
+
+[audit_trail]
+# Database table name for audit trail logs (will be created if not exists)
+# Automatically logs all INSERT, UPDATE, DELETE operations with:
+#   - userid: The user performing the action
+#   - datetime: UTC timestamp of the action
+#   - reference: Format "table_name:id=primary_key_value"
+#   - action: INSERT | UPDATE | DELETE
+table_name = "fastapi_audit_trail"
 
 [deploy_tools]
 # Default permissions for auto-generated table configs

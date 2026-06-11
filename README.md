@@ -36,6 +36,7 @@ Managing PostgreSQL databases in enterprise environments is complex. You need **
 
 ## Features
 
+### Core Features
 - **Kerberos Authentication**: Secure login using kinit with username/password validation
 - **Dynamic Dashboard**: Real-time database table viewing and editing with HTMX
 - **Pagination**: Efficient table browsing with configurable page sizes (25-500 rows)
@@ -45,6 +46,13 @@ Managing PostgreSQL databases in enterprise environments is complex. You need **
 - **Shell Script Execution**: Run predefined scripts with full output capture and status tracking
 - **User & Permission Management**: Granular access control (view, edit, add, delete, admin, run_scripts)
 - **Deployment Tools**: CLI utility for database connectivity, table discovery, and config validation
+
+### Advanced Features (New)
+- **Custom Table Display Names**: Optional friendly names for tables in dropdown (defaults to table name)
+- **User Deletion**: Admin-only user management with secure deletion from user table
+- **Customizable Login Text**: Configure Kerberos login page header and input placeholders
+- **Audit Trail**: Automatic logging of all INSERT/UPDATE/DELETE operations with user tracking
+- **Background Script Execution**: Optional async script execution with real-time status polling and notifications
 
 ## Quick Start
 
@@ -89,6 +97,104 @@ python app.py
 ```
 
 The application will be available at `http://localhost:8000`
+
+## Advanced Features Configuration
+
+### 1. Custom Table Display Names
+
+Display friendly names for tables in the Edit Tables dropdown instead of table names:
+
+```toml
+[table_permissions.i07_concession_hours]
+display_name = "Concession Hours"  # Optional; defaults to table name if omitted
+allow_add = true
+allow_delete = true
+editable_columns = ["concession_hours"]
+```
+
+**Result**: Dropdown shows "Concession Hours" but sends `i07_concession_hours` to backend.
+
+### 2. User Deletion (Admin Only)
+
+Admins can delete users from the Admin Panel (system prevents non-admins from deleting users):
+
+1. Navigate to Admin Panel → User Management
+2. Click Delete button next to user
+3. Confirm deletion
+4. User is removed from `fastapi_users` table and loses all access
+
+**Backend**: Uses `DELETE /api/admin/users/{username}` endpoint (admin-only protection).
+
+### 3. Customizable Kerberos Login Text
+
+Customize login page header and input placeholders:
+
+```toml
+[kerberos_login]
+header_text = "Company Portal Login"
+username_placeholder = "Domain Username"
+password_placeholder = "Kerberos Password"
+```
+
+**Changes on `/login` page**: Header text, username and password input placeholders update based on config. Falls back to defaults if not configured.
+
+### 4. Audit Trail
+
+Automatic logging of all database modifications with user tracking:
+
+```toml
+[audit_trail]
+table_name = "fastapi_audit_trail"  # Optional; this is the default
+```
+
+**What gets logged**:
+- Every INSERT, UPDATE, DELETE operation on managed tables
+- User performing the action
+- Timestamp (UTC) of the action
+- Reference to specific row: `table_name:id=primary_key_value`
+- Action type (INSERT, UPDATE, or DELETE)
+
+**Example audit record**:
+```
+userid: "john.smith"
+datetime: 2024-06-11 14:32:45+00:00
+reference: "i07_concession_hours:id=42"
+action: "UPDATE"
+```
+
+**Audit table schema**: Auto-created on app startup; includes:
+- `index`: Auto-incrementing primary key
+- `userid`: User performing action (from Kerberos)
+- `datetime`: UTC timestamp
+- `reference`: Format `table_name:id=primary_key`
+- `action`: INSERT | UPDATE | DELETE
+
+### 5. Background Script Execution
+
+Execute long-running scripts asynchronously with real-time status updates:
+
+```toml
+[scripts]
+long_sync_job = "/path/to/sync_data.sh"
+long_sync_job_run_in_background = true  # Enable background execution
+```
+
+**User Experience**:
+1. Click execute → Script starts in background
+2. Toast notification: "Script started in background"
+3. Sidebar shows running count: "🔄 Running: 2" (updates every 2 seconds)
+4. Results page polls every 2 seconds for status update
+5. On completion → Results display automatically + Toast: "Script completed"
+
+**Backend**:
+- Uses in-memory job tracker with unique execution IDs
+- Endpoints: `/api/script-status/{execution_id}`, `/api/active-scripts`
+- Job cleanup: Old jobs removed after 1 hour
+- Polling interval: 2 seconds (configurable in frontend)
+
+**Configuration**: Per-script opt-in; scripts without `_run_in_background = true` execute synchronously (old behavior).
+
+---
 
 ## Kerberos Setup for Development & Testing
 

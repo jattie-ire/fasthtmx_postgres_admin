@@ -56,6 +56,46 @@ DEPLOY_TOOLS_CONFIG = config.get("deploy_tools", {})
 # Table permissions config from TOML
 TABLE_PERMISSIONS = config.get("table_permissions", {})
 
+# Kerberos login config from TOML
+KERBEROS_LOGIN_CONFIG = config.get("kerberos_login", {})
+
+# Audit trail config from TOML
+AUDIT_TRAIL_CONFIG = config.get("audit_trail", {})
+
+
+def get_table_display_name(table_name: str) -> str:
+    """Get display name for a table, falling back to table_name if not configured"""
+    if table_name in TABLE_PERMISSIONS:
+        display_name = TABLE_PERMISSIONS[table_name].get("display_name")
+        if display_name:
+            return display_name
+    return table_name
+
+
+def get_kerberos_login_text() -> dict:
+    """Get Kerberos login page customizable text with defaults"""
+    return {
+        "header_text": KERBEROS_LOGIN_CONFIG.get("header_text", "Kerberos Login"),
+        "username_placeholder": KERBEROS_LOGIN_CONFIG.get("username_placeholder", "Username"),
+        "password_placeholder": KERBEROS_LOGIN_CONFIG.get("password_placeholder", "Password"),
+        "username_required_message": KERBEROS_LOGIN_CONFIG.get("username_required_message", "Please enter your username"),
+        "password_required_message": KERBEROS_LOGIN_CONFIG.get("password_required_message", "Please enter your password"),
+    }
+
+
+def get_audit_trail_table_name() -> str:
+    """Get audit trail table name from config, default to fastapi_audit_trail"""
+    return AUDIT_TRAIL_CONFIG.get("table_name", "fastapi_audit_trail")
+
+
+def is_script_background(script_name: str) -> bool:
+    """Check if a script should run in the background (default: False)"""
+    if not isinstance(SCRIPTS_CONFIG, dict):
+        return False
+    # Check run_in_background subsection
+    bg_scripts = SCRIPTS_CONFIG.get("run_in_background", {})
+    return bg_scripts.get(script_name, False)
+
 
 def get_table_permissions(table_name: str) -> dict:
     """Get permissions for a table. Returns dict with allow_add, allow_delete, editable_columns"""

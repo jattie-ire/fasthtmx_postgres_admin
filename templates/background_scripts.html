@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Background Scripts{% endblock %}
+
+{% block page_content %}
+<div class="content-area">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2>Background Scripts</h2>
+        <a href="/dashboard" class="btn btn-secondary" style="text-decoration: none; display: inline-block; padding: 8px 16px;">← Back to Dashboard</a>
+    </div>
+    
+    {% if jobs %}
+        <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; border: 1px solid var(--border-color); border-radius: 4px; overflow: hidden;">
+                <thead>
+                    <tr style="background: var(--bg-hover); border-bottom: 1px solid var(--border-color);">
+                        <th style="padding: 12px; text-align: left; font-weight: 600;">Script Name</th>
+                        <th style="padding: 12px; text-align: left; font-weight: 600;">Execution ID</th>
+                        <th style="padding: 12px; text-align: center; font-weight: 600; width: 120px;">Status</th>
+                        <th style="padding: 12px; text-align: center; font-weight: 600; width: 150px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for job in jobs %}
+                    <tr style="border-bottom: 1px solid var(--border-color); {% if job.status == 'completed' %}opacity: 0.7;{% endif %}">
+                        <td style="padding: 12px; vertical-align: middle;">
+                            <strong>{{ job.script_name }}</strong>
+                        </td>
+                        <td style="padding: 12px; vertical-align: middle; font-family: monospace; font-size: 12px; color: var(--text-secondary);">
+                            {{ job.execution_id[:8] }}...
+                        </td>
+                        <td style="padding: 12px; vertical-align: middle; text-align: center;">
+                            {% if job.status == 'running' %}
+                                <span style="display: inline-block; padding: 4px 12px; background: #fff3cd; color: #856404; border-radius: 20px; font-size: 12px; font-weight: 500;">
+                                    🔄 Running
+                                </span>
+                            {% elif job.status == 'completed' %}
+                                <span style="display: inline-block; padding: 4px 12px; background: #d4edda; color: #155724; border-radius: 20px; font-size: 12px; font-weight: 500;">
+                                    ✓ Completed
+                                </span>
+                            {% elif job.status == 'failed' %}
+                                <span style="display: inline-block; padding: 4px 12px; background: #f8d7da; color: #721c24; border-radius: 20px; font-size: 12px; font-weight: 500;">
+                                    ✗ Failed
+                                </span>
+                            {% else %}
+                                <span style="display: inline-block; padding: 4px 12px; background: #e2e3e5; color: #383d41; border-radius: 20px; font-size: 12px; font-weight: 500;">
+                                    ? {{ job.status | capitalize }}
+                                </span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 12px; vertical-align: middle; text-align: center;">
+                            <button onclick="viewScriptResults('{{ job.execution_id }}')" class="btn btn-small" style="padding: 6px 12px; font-size: 12px;">
+                                View Results
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div style="padding: 40px; text-align: center; background: var(--bg-content); border-radius: 4px; border: 1px solid var(--border-color);">
+            <p style="color: var(--text-secondary); font-size: 16px; margin: 0;">
+                No background scripts running or completed yet.
+            </p>
+            <a href="/dashboard" class="btn btn-primary" style="margin-top: 20px; display: inline-block; text-decoration: none; padding: 8px 16px;">Go to Dashboard</a>
+        </div>
+    {% endif %}
+</div>
+
+<script>
+function viewScriptResults(executionId) {
+    // Fetch and display results in a modal or new view
+    fetch(`/api/script-status/${executionId}`)
+        .then(r => r.json())
+        .then(data => {
+            // Open script results view
+            window.location.href = `/script-results/${executionId}`;
+        })
+        .catch(err => {
+            showToast('Error loading script results', 'error');
+            console.error(err);
+        });
+}
+
+// Auto-refresh every 3 seconds if there are running scripts
+let refreshInterval;
+
+function autoRefresh() {
+    const hasRunning = document.querySelectorAll('span:contains("Running")').length > 0;
+    if (hasRunning) {
+        if (!refreshInterval) {
+            refreshInterval = setInterval(() => {
+                location.reload();
+            }, 3000);
+        }
+    } else {
+        if (refreshInterval) {
+            clearInterval(refreshInterval);
+            refreshInterval = null;
+        }
+    }
+}
+
+// Start auto-refresh on page load
+document.addEventListener('DOMContentLoaded', autoRefresh);
+
+// Also check periodically
+setInterval(autoRefresh, 1000);
+</script>
+{% endblock %}

@@ -26,6 +26,12 @@
                 <option value="">Loading scripts...</option>
             </select>
             <button onclick="executeScript()" class="btn btn-primary" style="font-size: 14px; padding: 8px 12px;">Execute Script</button>
+            <div id="script-status-indicator" style="padding: 8px; text-align: center; display: none; background: #e3f2fd; border-radius: 4px; color: #1976d2; font-size: 12px; cursor: pointer; transition: background 0.3s;" onclick="window.location.href='/background-scripts'" title="Click to view background scripts">
+                🔄 Running: <span id="active-script-count">0</span>
+            </div>
+            {% if can_run_scripts %}
+            <a href="/background-scripts" {% if page == 'background-scripts' %}class="active"{% endif %} style="display: block; padding: 8px 12px; text-align: center; background: var(--bg-button-secondary); color: var(--text-primary); border-radius: 4px; text-decoration: none; font-size: 14px; transition: background 0.3s;">Background Scripts</a>
+            {% endif %}
         </div>
     </div>
     
@@ -67,10 +73,13 @@ document.addEventListener('DOMContentLoaded', function() {
             tableSelect.innerHTML = '<option value="">-- Select Table --</option>';
             data.tables.forEach(table => {
                 const option = document.createElement('option');
-                option.value = table;
-                option.textContent = table;
+                // Handle both old format (string) and new format (object with display_name)
+                const tableName = typeof table === 'string' ? table : table.table_name;
+                const displayName = typeof table === 'string' ? table : (table.display_name || table.table_name);
+                option.value = tableName;
+                option.textContent = displayName;
                 // Select the first table by default
-                if (data.tables.length > 0 && table === data.tables[0]) {
+                if (data.tables.length > 0 && tableName === (typeof data.tables[0] === 'string' ? data.tables[0] : data.tables[0].table_name)) {
                     option.selected = true;
                 }
                 tableSelect.appendChild(option);
@@ -180,5 +189,82 @@ function executeScript() {
     
     // Navigate to results page
     window.location.href = `/execute-script/${scriptName}`;
+}
+
+// Poll active scripts and update indicator
+function updateScriptStatus() {
+    fetch('/api/active-scripts')
+        .then(response => response.json())
+        .then(data => {
+            const indicator = document.getElementById('script-status-indicator');
+            const countSpan = document.getElementById('active-script-count');
+            
+            if (data.scripts && data.scripts.length > 0) {
+                countSpan.textContent = data.scripts.length;
+                indicator.style.display = 'block';
+                // Continue polling if scripts are still running
+                if (!window.scriptStatusInterval) {
+                    window.scriptStatusInterval = setInterval(updateScriptStatus, 2000);
+                }
+            } else {
+                indicator.style.display = 'none';
+                // Stop polling when no scripts are running
+                if (window.scriptStatusInterval) {
+                    clearInterval(window.scriptStatusInterval);
+                    window.scriptStatusInterval = null;
+                }
+            }
+        })
+        .catch(err => console.error('Failed to update script status:', err));
+}
+
+// Start polling only when a script is executed (not on page load)
+// Initialize polling as null to prevent continuous polling
+window.scriptStatusInterval = null;
+
+// Check once for active scripts on page load
+// Only start polling if scripts are actually running
+updateScriptStatus();
+
+// Show toast notification
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: ${type === 'success' ? '#4caf50' : type === 'error' ? '#f44336' : '#2196f3'};
+        color: white;
+        padding: 16px 24px;
+        border-radius: 4px;
+        z-index: 1000;
+        animation: slideIn 0.3s ease-in-out;
+        max-width: 400px;
+        word-wrap: break-word;
+    `;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease-in-out';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// Add CSS animations if not already present
+if (!document.querySelector('style[data-toast-animations]')) {
+    const style = document.createElement('style');
+    style.setAttribute('data-toast-animations', '');
+    style.textContent = `
+        @keyframes slideIn {
+            from { transform: translateX(500px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(500px); opacity: 0; }
+        }
+    `;
+    document.head.appendChild(style);
 }
 </script>

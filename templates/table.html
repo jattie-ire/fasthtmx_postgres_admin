@@ -161,11 +161,19 @@
                                     <input type="number" step="any" name="{{ col }}" value="{{ row[col] | default('') }}" class="input-field" {% if not is_editable %}disabled{% endif %}>
                                     {% if not is_editable %}<input type="hidden" name="{{ col }}_original" value="{{ row[col] | default('') }}">{% endif %}
                                 {% elif col_type in ['date'] %}
-                                    <input type="date" name="{{ col }}" value="{{ row[col] | default('') }}" class="input-field" {% if not is_editable %}disabled{% endif %}>
-                                    {% if not is_editable %}<input type="hidden" name="{{ col }}_original" value="{{ row[col] | default('') }}">{% endif %}
+                                    {% if is_editable %}
+                                        <input type="date" name="{{ col }}" value="{{ row[col] | default('') }}" class="input-field">
+                                    {% else %}
+                                        <span>{{ row[col] | default('') }}</span>
+                                        <input type="hidden" name="{{ col }}_original" value="{{ row[col] | default('') }}">
+                                    {% endif %}
                                 {% elif col_type in ['timestamp', 'timestamp with time zone', 'timestamp without time zone'] %}
-                                    <input type="datetime-local" name="{{ col }}" value="{{ row[col] | default('') }}" class="input-field" {% if not is_editable %}disabled{% endif %}>
-                                    {% if not is_editable %}<input type="hidden" name="{{ col }}_original" value="{{ row[col] | default('') }}">{% endif %}
+                                    {% if is_editable %}
+                                        <input type="datetime-local" name="{{ col }}" value="{{ row[col] | default('') }}" class="input-field">
+                                    {% else %}
+                                        <span>{{ row[col] | default('') }}</span>
+                                        <input type="hidden" name="{{ col }}_original" value="{{ row[col] | default('') }}">
+                                    {% endif %}
                                 {% elif col_type == 'boolean' %}
                                     <input type="checkbox" name="{{ col }}" {% if row[col] %}checked{% endif %} class="input-checkbox" {% if not is_editable %}disabled{% endif %}>
                                     {% if not is_editable %}<input type="hidden" name="{{ col }}_original" value="{% if row[col] %}on{% endif %}">{% endif %}

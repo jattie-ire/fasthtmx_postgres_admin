@@ -349,7 +349,10 @@ function loadUsers() {
                 userDiv.className = 'user-row';
                 
                 userDiv.innerHTML = `
-                    <div class="user-row-header">${user.user}${user.email ? ' (' + user.email + ')' : ''}</div>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div class="user-row-header">${user.user}${user.email ? ' (' + user.email + ')' : ''}</div>
+                        <button onclick="deleteUserConfirm('${user.user}')" class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;">Delete User</button>
+                    </div>
                     <div class="user-perms">
                         <div class="perm-item">
                             <input type="checkbox" class="perm-checkbox" id="view-${user.user}" 
@@ -588,6 +591,31 @@ function showError(section, message) {
     const el = document.getElementById(section + '-error');
     el.textContent = message;
     el.style.display = 'block';
+}
+
+function deleteUserConfirm(username) {
+    if (confirm(`Are you sure you want to delete the user "${username}"? This action cannot be undone.`)) {
+        deleteUser(username);
+    }
+}
+
+function deleteUser(username) {
+    fetch(`/api/admin/users/${username}`, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showError('users', data.error);
+        } else {
+            showSuccess('users', `User '${username}' deleted successfully`);
+            // Reload users list after short delay
+            setTimeout(loadUsers, 500);
+        }
+    })
+    .catch(err => {
+        showError('users', 'Failed to delete user: ' + err);
+    });
 }
 
 // Load users and initialize editor on page load

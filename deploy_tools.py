@@ -350,10 +350,66 @@ def cmd_validate_config(args):
     except Exception as e:
         errors.append(f"Error validating user table: {str(e)}")
     
+    # 8. Validate audit trail configuration
+    print("\nChecking audit trail configuration...")
+    audit_config = config.get("audit_trail", {})
+    audit_table_name = audit_config.get("table_name", "fastapi_audit_trail")
+    
+    try:
+        # Check if audit table exists or can be created
+        cursor.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = %s",
+            (audit_table_name,)
+        )
+        if cursor.fetchone():
+            print_success(f"Audit trail table '{audit_table_name}' exists")
+            
+            # Verify schema
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = %s ORDER BY ordinal_position",
+                (audit_table_name,)
+            )
+            audit_cols = {row[0] for row in cursor.fetchall()}
+            required_audit_cols = {"index", "userid", "datetime", "reference", "action"}
+            
+            missing = required_audit_cols - audit_cols
+            if missing:
+                warnings.append(f"Audit table missing columns (will be created on startup): {', '.join(missing)}")
+            else:
+                print_success(f"  ✓ All required audit columns present")
+        else:
+            print_info(f"Audit trail table '{audit_table_name}' will be created on app startup")
+    except Exception as e:
+        warnings.append(f"Audit table validation: {str(e)} (will be created on startup)")
+    
+    # 9. Validate new feature configurations
+    print("\nChecking advanced feature configurations...")
+    
+    # Check display names
+    has_display_names = any(
+        perms.get("display_name") for perms in config.get("table_permissions", {}).values()
+    )
+    if has_display_names:
+        print_success("Table display names configured")
+    
+    # Check Kerberos login customization
+    kerberos_config = config.get("kerberos_login", {})
+    if kerberos_config:
+        print_success("Kerberos login text customization configured")
+    
+    # Check background scripts
+    scripts_config = config.get("scripts", {})
+    has_background = any(
+        config.get(f"{script}_run_in_background", False) 
+        for script in scripts_config.keys()
+    )
+    if has_background:
+        print_success("Background script execution configured")
+    
     cursor.close()
     return_db_connection(conn)
     
-    # 8. Summary
+    # 10. Summary
     print("\n" + "="*70)
     if errors:
         print(f"\n✗ VALIDATION FAILED: {len(errors)} error(s)\n")

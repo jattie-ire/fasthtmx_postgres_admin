@@ -7,6 +7,9 @@ from psycopg2.extras import RealDictCursor
 from pathlib import Path
 import subprocess
 import json
+import uuid
+import threading
+import time
 
 # Import utility modules
 from config import (
@@ -24,11 +27,15 @@ from config import (
     can_user_delete,
     is_user_admin,
     can_user_run_scripts,
+    get_audit_trail_table_name,
+    is_script_background,
 )
 from auth import kerberos_auth
 from database import (
     get_db_connection,
+    return_db_connection,
     get_available_tables,
+    get_tables_with_display_names,
     get_table_columns,
     get_column_types,
     get_table_data,
@@ -42,11 +49,93 @@ from database import (
     export_table_to_excel,
     insert_imported_rows,
     get_disk_stats,
+    initialize_connection_pool,
+    create_audit_table,
+    delete_user,
+    log_audit_event,
+    get_primary_key,
 )
 from templates import render_template
-from database import initialize_connection_pool
 
 app = FastAPI()
+
+# ============================================================================
+# BACKGROUND SCRIPT JOB TRACKER
+# ============================================================================
+
+# In-memory job tracker for background scripts
+_script_jobs = {}
+_jobs_lock = threading.Lock()
+
+
+def generate_execution_id():
+    """Generate a unique execution ID for script jobs"""
+    return str(uuid.uuid4())
+
+
+def add_job(execution_id: str, script_name: str):
+    """Add a new background job to the tracker"""
+    with _jobs_lock:
+        _script_jobs[execution_id] = {
+            "status": "running",
+            "script_name": script_name,
+            "start_time": time.time(),
+            "result": None,
+        }
+
+
+def update_job_result(execution_id: str, result: dict):
+    """Update a job with completion result"""
+    with _jobs_lock:
+        if execution_id in _script_jobs:
+            _script_jobs[execution_id]["status"] = "completed"
+            _script_jobs[execution_id]["end_time"] = time.time()
+            _script_jobs[execution_id]["result"] = result
+
+
+def get_job_status(execution_id: str) -> dict:
+    """Get the status of a job"""
+    with _jobs_lock:
+        if execution_id not in _script_jobs:
+            return {"error": "Job not found", "status": "not_found"}
+        
+        job = _script_jobs[execution_id]
+        return {
+            "execution_id": execution_id,
+            "status": job["status"],
+            "script_name": job["script_name"],
+            "start_time": job["start_time"],
+            "end_time": job.get("end_time"),
+            "result": job["result"],
+        }
+
+
+def get_active_scripts() -> list:
+    """Get list of currently running scripts"""
+    with _jobs_lock:
+        return [
+            {
+                "execution_id": eid,
+                "script_name": job["script_name"],
+                "start_time": job["start_time"],
+            }
+            for eid, job in _script_jobs.items()
+            if job["status"] == "running"
+        ]
+
+
+def cleanup_old_jobs():
+    """Remove jobs completed more than 1 hour ago"""
+    current_time = time.time()
+    cutoff_time = current_time - 3600  # 1 hour
+    
+    with _jobs_lock:
+        jobs_to_delete = [
+            eid for eid, job in _script_jobs.items()
+            if job["status"] == "completed" and job.get("end_time", 0) < cutoff_time
+        ]
+        for eid in jobs_to_delete:
+            del _script_jobs[eid]
 
 # ============================================================================
 # HTTP CACHING MIDDLEWARE
@@ -77,9 +166,10 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database connection pool on app startup"""
+    """Initialize database connection pool and create audit table on app startup"""
     print("Initializing application...")
     initialize_connection_pool()
+    create_audit_table()
     print("✓ Application startup complete")
 
 
@@ -133,7 +223,18 @@ async def root(request: Request):
     if username:
         return await dashboard(request)
     
-    html = render_template("login.html", {})
+    from config import get_kerberos_login_text
+    login_text = get_kerberos_login_text()
+    html = render_template("login.html", {**login_text})
+    return html
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def get_login(request: Request):
+    """Login page endpoint"""
+    from config import get_kerberos_login_text
+    login_text = get_kerberos_login_text()
+    html = render_template("login.html", {**login_text})
     return html
 
 
@@ -141,6 +242,7 @@ async def root(request: Request):
 async def login(request: Request, username: str = Form(...), password: str = Form(...)):
     """Login endpoint"""
     from database import ensure_user_exists
+    from config import get_kerberos_login_text
     
     if kerberos_auth(username, password):
         # Ensure user exists in fastapi_users table
@@ -150,7 +252,9 @@ async def login(request: Request, username: str = Form(...), password: str = For
         response.set_cookie("username", username)
         return response
     
-    html = render_template("login.html", {"error": "Invalid credentials"})
+    login_text = get_kerberos_login_text()
+    login_text["error"] = "Invalid credentials"
+    html = render_template("login.html", {**login_text})
     return html
 
 
@@ -253,6 +357,7 @@ async def dashboard(request: Request):
         "username": username,
         "page": "dashboard",
         "is_admin": is_user_admin(user_perms),
+        "can_run_scripts": can_user_run_scripts(user_perms),
         "available_tables": [],
         "view_name": view_name,
         "display_text": display_text,
@@ -284,7 +389,8 @@ async def admin_panel(request: Request):
     html = render_template("admin.html", {
         "username": username,
         "page": "admin",
-        "is_admin": True
+        "is_admin": True,
+        "can_run_scripts": can_user_run_scripts(user_perms)
     })
     return html
 
@@ -360,6 +466,27 @@ async def api_update_user(user_to_edit: str, request: Request):
         return {"success": True, "message": f"User '{user_to_edit}' permissions updated"}
     except Exception as e:
         print(f"ERROR updating user: {e}")
+        return {"error": str(e)}
+
+
+@app.delete("/api/admin/users/{user_to_delete}")
+async def api_delete_user(user_to_delete: str, request: Request):
+    """Delete a user from the system"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    user_perms = get_user_permissions(username)
+    if not is_user_admin(user_perms):
+        return {"error": "Admin privileges required"}
+    
+    try:
+        if delete_user(user_to_delete):
+            return {"success": True, "message": f"User '{user_to_delete}' deleted successfully"}
+        else:
+            return {"error": f"Failed to delete user '{user_to_delete}'"}
+    except Exception as e:
+        print(f"ERROR in delete user endpoint: {e}")
         return {"error": str(e)}
 
 
@@ -475,6 +602,7 @@ async def help(request: Request):
         "username": username,
         "page": "help",
         "is_admin": is_user_admin(user_perms),
+        "can_run_scripts": can_user_run_scripts(user_perms),
         "available_tables": []
     })
     return html
@@ -538,7 +666,12 @@ async def save_row(request: Request, table_name: str = Form(...)):
         cursor.execute(query, values)
         conn.commit()
         cursor.close()
-        conn.close()
+        
+        # Log audit event
+        reference = f"{table_name}:id={row_id}"
+        log_audit_event(username, reference, "UPDATE")
+        
+        return_db_connection(conn)
         
         # Redirect back to table view
         return RedirectResponse(url=f"/table/{table_name}", status_code=303)
@@ -602,8 +735,19 @@ async def add_row(request: Request, table_name: str = Form(...)):
         cursor = conn.cursor()
         cursor.execute(query, insert_values)
         conn.commit()
+        
+        # Get the ID of the inserted row
+        id_column = columns[0]
+        cursor.execute(f"SELECT lastval() as id")
+        result = cursor.fetchone()
+        new_row_id = result[0] if result else "unknown"
         cursor.close()
-        conn.close()
+        
+        # Log audit event
+        reference = f"{table_name}:id={new_row_id}"
+        log_audit_event(username, reference, "INSERT")
+        
+        return_db_connection(conn)
         
         # Redirect back to table view
         return RedirectResponse(url=f"/table/{table_name}", status_code=303)
@@ -651,7 +795,12 @@ async def delete_row(request: Request, table_name: str = Form(...)):
         cursor.execute(query, (row_id,))
         conn.commit()
         cursor.close()
-        conn.close()
+        
+        # Log audit event
+        reference = f"{table_name}:id={row_id}"
+        log_audit_event(username, reference, "DELETE")
+        
+        return_db_connection(conn)
         
         # Redirect back to table view
         return RedirectResponse(url=f"/table/{table_name}", status_code=303)
@@ -713,12 +862,12 @@ async def api_update_row(table_name: str, row_id: str, request: Request):
 
 @app.get("/api/tables")
 async def api_get_tables(request: Request):
-    """API endpoint to get available tables (async)"""
+    """API endpoint to get available tables with display names (async)"""
     username = request.cookies.get("username")
     if not username:
         return {"tables": []}
     
-    tables = get_available_tables()
+    tables = get_tables_with_display_names()
     return {"tables": tables}
 
 
@@ -801,6 +950,7 @@ async def get_table_data_route(table_name: str, request: Request, page: int = 1,
         "username": username,
         "page": "table",
         "is_admin": is_user_admin(user_perms),
+        "can_run_scripts": can_user_run_scripts(user_perms),
         "available_tables": [],
         "lookups": lookups,
         "lookup_options": lookup_options,
@@ -980,10 +1130,11 @@ async def api_get_scripts(request: Request):
         return {"error": "You do not have permission to run scripts"}
     
     try:
-        scripts_list = [
-            {"name": script_name, "path": script_path}
-            for script_name, script_path in SCRIPTS_CONFIG.items()
-        ]
+        scripts_list = []
+        for script_name, script_path in SCRIPTS_CONFIG.items():
+            # Skip the run_in_background subsection
+            if script_name != "run_in_background" and isinstance(script_path, str):
+                scripts_list.append({"name": script_name, "path": script_path})
         return {"scripts": scripts_list}
     except Exception as e:
         print(f"ERROR fetching scripts: {e}")
@@ -992,15 +1143,16 @@ async def api_get_scripts(request: Request):
 
 def execute_script_internal(script_name: str):
     """Internal function to execute a script and return result dict"""
-    import time
     start_time = time.time()
     
     try:
-        # Verify script exists in config
-        if script_name not in SCRIPTS_CONFIG:
+        # Get script path from config
+        if script_name not in SCRIPTS_CONFIG or SCRIPTS_CONFIG[script_name] == "run_in_background":
             return {"error": f"Script '{script_name}' not found in configuration", "success": False}
         
         script_path = SCRIPTS_CONFIG[script_name]
+        if not isinstance(script_path, str):
+            return {"error": f"Script '{script_name}' path is invalid", "success": False}
         
         # Resolve path relative to app.py location
         app_dir = Path(__file__).parent
@@ -1043,6 +1195,12 @@ def execute_script_internal(script_name: str):
         return {"error": str(e), "success": False, "execution_time": elapsed_time}
 
 
+def execute_script_async(script_name: str, execution_id: str):
+    """Execute script in a background thread"""
+    result = execute_script_internal(script_name)
+    update_job_result(execution_id, result)
+
+
 @app.get("/execute-script/{script_name}", response_class=HTMLResponse)
 async def execute_script(script_name: str, request: Request):
     """Execute a predefined shell script and show results page"""
@@ -1054,18 +1212,74 @@ async def execute_script(script_name: str, request: Request):
     if not can_user_run_scripts(user_perms):
         return render_template("error.html", {"error": "You do not have permission to run scripts", "username": username})
     
-    result = execute_script_internal(script_name)
+    # Check if script should run in background
+    if is_script_background(script_name):
+        # Execute in background
+        execution_id = generate_execution_id()
+        add_job(execution_id, script_name)
+        
+        # Start execution in background thread
+        thread = threading.Thread(target=execute_script_async, args=(script_name, execution_id), daemon=True)
+        thread.start()
+        
+        # Return a page that will poll for status
+        html = render_template("script_results.html", {
+            "username": username,
+            "is_admin": is_user_admin(user_perms),
+            "can_run_scripts": can_user_run_scripts(user_perms),
+            "script_name": script_name,
+            "execution_id": execution_id,
+            "is_background": True,
+        })
+        return html
+    else:
+        # Execute synchronously (old behavior)
+        result = execute_script_internal(script_name)
+        
+        html = render_template("script_results.html", {
+            "username": username,
+            "is_admin": is_user_admin(user_perms),
+            "can_run_scripts": can_user_run_scripts(user_perms),
+            "success": result.get("success", False),
+            "script_name": result.get("script_name", script_name),
+            "return_code": result.get("return_code", ""),
+            "stdout": result.get("stdout", ""),
+            "stderr": result.get("stderr", ""),
+            "error": result.get("error", ""),
+            "execution_time": result.get("execution_time", 0),
+        })
+        return html
+
+
+@app.get("/script-results/{execution_id}", response_class=HTMLResponse)
+async def view_script_results(execution_id: str, request: Request):
+    """View results of a specific background script execution"""
+    username = request.cookies.get("username")
+    if not username:
+        return RedirectResponse(url="/", status_code=303)
     
+    user_perms = get_user_permissions(username)
+    if not can_user_run_scripts(user_perms):
+        return render_template("error.html", {"error": "You do not have permission to view scripts", "username": username})
+    
+    # Get the job info
+    with _jobs_lock:
+        job_info = _script_jobs.get(execution_id, {})
+    
+    if not job_info:
+        return render_template("error.html", {"error": "Execution not found", "username": username})
+    
+    script_name = job_info.get("script_name", "Unknown")
+    status = get_job_status(execution_id)
+    
+    # Return the script results page with polling if still running
     html = render_template("script_results.html", {
         "username": username,
         "is_admin": is_user_admin(user_perms),
-        "success": result.get("success", False),
-        "script_name": result.get("script_name", script_name),
-        "return_code": result.get("return_code", ""),
-        "stdout": result.get("stdout", ""),
-        "stderr": result.get("stderr", ""),
-        "error": result.get("error", ""),
-        "execution_time": result.get("execution_time", 0),
+        "can_run_scripts": can_user_run_scripts(user_perms),
+        "script_name": script_name,
+        "execution_id": execution_id,
+        "is_background": True,
     })
     return html
 
@@ -1081,9 +1295,98 @@ async def api_execute_script(script_name: str, request: Request):
     if not can_user_run_scripts(user_perms):
         return {"error": "You do not have permission to run scripts"}
     
-    result = execute_script_internal(script_name)
-    result["message"] = "Script executed successfully" if result.get("success") else "Script completed with errors"
-    return result
+    # Check if script should run in background
+    if is_script_background(script_name):
+        # Execute in background
+        execution_id = generate_execution_id()
+        add_job(execution_id, script_name)
+        
+        # Start execution in background thread
+        thread = threading.Thread(target=execute_script_async, args=(script_name, execution_id), daemon=True)
+        thread.start()
+        
+        return {
+            "success": True,
+            "execution_id": execution_id,
+            "message": f"Script '{script_name}' started in background",
+            "is_background": True,
+        }
+    else:
+        # Execute synchronously (old behavior)
+        result = execute_script_internal(script_name)
+        result["message"] = "Script executed successfully" if result.get("success") else "Script completed with errors"
+        return result
+
+
+@app.get("/api/script-status/{execution_id}")
+async def api_script_status(execution_id: str, request: Request):
+    """API endpoint to get the status of a background script execution"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    user_perms = get_user_permissions(username)
+    if not can_user_run_scripts(user_perms):
+        return {"error": "You do not have permission to run scripts"}
+    
+    return get_job_status(execution_id)
+
+
+@app.get("/api/active-scripts")
+async def api_active_scripts(request: Request):
+    """API endpoint to get list of currently running scripts"""
+    username = request.cookies.get("username")
+    if not username:
+        return {"error": "Not authenticated"}
+    
+    user_perms = get_user_permissions(username)
+    if not can_user_run_scripts(user_perms):
+        return {"error": "You do not have permission to run scripts"}
+    
+    active = get_active_scripts()
+    return {"scripts": active, "count": len(active)}
+
+
+@app.get("/background-scripts", response_class=HTMLResponse)
+async def background_scripts_page(request: Request):
+    """Page to view all active and recently completed background scripts"""
+    username = request.cookies.get("username")
+    if not username:
+        return RedirectResponse(url="/login", status_code=302)
+    
+    user_perms = get_user_permissions(username)
+    if not can_user_run_scripts(user_perms):
+        return RedirectResponse(url="/dashboard", status_code=302)
+    
+    # Get all jobs (active and completed)
+    with _jobs_lock:
+        all_jobs = list(_script_jobs.items())
+    
+    # Convert to display format with status info
+    jobs_display = []
+    for execution_id, job_info in all_jobs:
+        status = get_job_status(execution_id)
+        jobs_display.append({
+            "execution_id": execution_id,
+            "script_name": job_info.get("script_name", "Unknown"),
+            "status": status.get("status", "unknown"),
+            "completion_time": status.get("completion_time", None)
+        })
+    
+    # Sort by completion time (newest first), with active jobs at top
+    jobs_display.sort(key=lambda x: (x["status"] != "completed", x.get("completion_time", 0)), reverse=True)
+    
+    return render_template(
+        "background_scripts.html",
+        {
+            "jobs": jobs_display,
+            "page": "background-scripts",
+            "username": username,
+            "is_admin": user_perms.get("is_admin", False),
+            "can_run_scripts": can_user_run_scripts(user_perms),
+            "kerberos_domain": config.get("app", {}).get("kerberos_domain", "LOCAL")
+        }
+    )
 
 
 # ============================================================================

@@ -95,7 +95,7 @@
 </head>
 <body>
     <div class="login-container">
-        <h1>Kerberos Login</h1>
+        <h1>{{ header_text | default('Kerberos Login') }}</h1>
         
         {% if error %}
         <div class="alert alert-error">
@@ -105,24 +105,26 @@
         
         <form method="post" action="/login">
             <div class="form-group">
-                <label for="username">Username</label>
+                <label for="username">{{ username_placeholder | default('Username') }}</label>
                 <input 
                     type="text" 
                     id="username" 
                     name="username" 
-                    placeholder="username" 
+                    placeholder="{{ username_placeholder | default('Username') }}" 
+                    title="{{ username_required_message | default('Please enter your username') }}"
                     required
                     autofocus
                 >
             </div>
             
             <div class="form-group">
-                <label for="password">Password</label>
+                <label for="password">{{ password_placeholder | default('Password') }}</label>
                 <input 
                     type="password" 
                     id="password" 
                     name="password" 
-                    placeholder="Kerberos password" 
+                    placeholder="{{ password_placeholder | default('Password') }}" 
+                    title="{{ password_required_message | default('Please enter your password') }}"
                     required
                 >
             </div>
@@ -132,5 +134,32 @@
             </button>
         </form>
     </div>
+
+    <script>
+        // Override browser validation messages with custom titles
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        
+        // Set custom validation messages from title attributes
+        usernameInput.addEventListener('invalid', function(event) {
+            if (this.validity.valueMissing) {
+                this.setCustomValidity(this.title || 'Please enter your username');
+            }
+        });
+        
+        usernameInput.addEventListener('input', function() {
+            this.setCustomValidity('');
+        });
+        
+        passwordInput.addEventListener('invalid', function(event) {
+            if (this.validity.valueMissing) {
+                this.setCustomValidity(this.title || 'Please enter your password');
+            }
+        });
+        
+        passwordInput.addEventListener('input', function() {
+            this.setCustomValidity('');
+        });
+    </script>
 </body>
 </html>
