@@ -127,16 +127,22 @@ Admins can delete users from the Admin Panel (system prevents non-admins from de
 
 ### 3. Customizable Kerberos Login Text
 
-Customize login page header and input placeholders:
+Customize login page header, input placeholders, and validation messages:
 
 ```toml
 [kerberos_login]
 header_text = "Company Portal Login"
-username_placeholder = "Domain Username"
-password_placeholder = "Kerberos Password"
+username_placeholder = "Employee ID"
+password_placeholder = "Domain Password"
+username_required_message = "Please enter your employee ID"
+password_required_message = "Please enter your domain password"
 ```
 
-**Changes on `/login` page**: Header text, username and password input placeholders update based on config. Falls back to defaults if not configured.
+**Changes on `/login` page**: 
+- Header text updates
+- Username and password input placeholders update
+- Custom validation messages appear when fields are empty (via browser validation popups)
+- All fields fall back to defaults if not configured
 
 ### 4. Audit Trail
 
@@ -171,28 +177,43 @@ action: "UPDATE"
 
 ### 5. Background Script Execution
 
-Execute long-running scripts asynchronously with real-time status updates:
+Execute long-running scripts asynchronously with real-time status updates and progress tracking:
 
 ```toml
 [scripts]
-long_sync_job = "/path/to/sync_data.sh"
-long_sync_job_run_in_background = true  # Enable background execution
+"Sync Data" = "/path/to/sync_data.sh"
+"Backup Database" = "/path/to/backup.sh"
+
+[scripts.run_in_background]
+# Optional: specify which scripts run in background (default: synchronous)
+"Sync Data" = true
+"Backup Database" = true
+
+[scripts.timeout]
+# Optional: timeout in seconds per script (default: 300)
+"Sync Data" = 600
+"Backup Database" = 1200
 ```
 
 **User Experience**:
 1. Click execute → Script starts in background
 2. Toast notification: "Script started in background"
 3. Sidebar shows running count: "🔄 Running: 2" (updates every 2 seconds)
-4. Results page polls every 2 seconds for status update
+4. Results page displays:
+   - Real-time progress bar (% complete based on elapsed/timeout)
+   - Elapsed time vs total timeout (e.g., "45s / 600s")
+   - Status badge (⏳ Running → ✓ Success or ✗ Error)
+   - Auto-updates every 2 seconds
 5. On completion → Results display automatically + Toast: "Script completed"
 
 **Backend**:
 - Uses in-memory job tracker with unique execution IDs
 - Endpoints: `/api/script-status/{execution_id}`, `/api/active-scripts`
 - Job cleanup: Old jobs removed after 1 hour
+- Progress calculation: `(elapsed_time / timeout) * 100`, capped at 99% until completion
 - Polling interval: 2 seconds (configurable in frontend)
 
-**Configuration**: Per-script opt-in; scripts without `_run_in_background = true` execute synchronously (old behavior).
+**Configuration**: Per-script opt-in via `[scripts.run_in_background]`; scripts without this flag execute synchronously (old behavior).
 
 ---
 
@@ -533,20 +554,30 @@ Additionally, table-level permissions in `config.toml` control which columns are
 
 ### Configuration
 
-Define executable scripts in `config.toml`:
+Define executable scripts in `config.toml` and optionally enable background execution with custom timeouts:
 
 ```toml
 [scripts]
-backup_job = "../scripts/backup.sh"
-data_sync = "../scripts/sync.sh"
-cleanup = "/opt/maintenance/cleanup.sh"
+"backup_job" = "/path/to/backup.sh"
+"data_sync" = "/path/to/sync.sh"
+"cleanup" = "/opt/maintenance/cleanup.sh"
+
+[scripts.run_in_background]
+"backup_job" = true
+"data_sync" = true
+
+[scripts.timeout]
+"backup_job" = 1800
+"data_sync" = 3600
 ```
 
 ### Execution
 
 - **Access Control**: Only users with `run_scripts` permission can execute
-- **Timeout**: Scripts timeout after 5 minutes of execution
-- **UI Lock**: Navigation disabled during execution to preserve results
+- **Timeout**: Scripts timeout after configured seconds (default: 300 seconds if not specified)
+- **Background Execution**: Optional per-script; scripts without `[scripts.run_in_background]` execute synchronously
+- **Progress Tracking**: Background scripts show real-time progress bar during execution
+- **UI Lock**: Navigation disabled during synchronous execution to preserve results
 - **Output Capture**: Full stdout and stderr captured and displayed
 
 ### Results Display
@@ -556,6 +587,7 @@ The results page shows:
 - Script name and execution timestamp
 - Exit code (0 = success, non-zero = error)
 - Total execution time in seconds
+- Real-time progress bar for background execution (updated every 2 seconds)
 - Complete stdout output in code block
 - Any stderr output with error styling
 - Ability to return to dashboard after completion
@@ -660,6 +692,51 @@ server {
 }
 ```
 
+#### 3b. Reverse Proxy with HAProxy (Alternative)
+
+Alternatively, set up HAProxy as a reverse proxy:
+
+```
+# /etc/haproxy/haproxy.cfg
+
+global
+    maxconn 4096
+    daemon
+
+defaults
+    mode http
+    timeout connect 5000ms
+    timeout client 50000ms
+    timeout server 50000ms
+
+frontend http-in
+    bind *:80
+    redirect scheme https code 301 if !{ ssl_fc }
+
+frontend https-in
+    bind *:443 ssl crt /path/to/cert.pem
+    default_backend fasthtmx_admin
+
+backend fasthtmx_admin
+    balance roundrobin
+    server server1 127.0.0.1:8000 maxconn 32
+    server server2 127.0.0.1:8001 maxconn 32
+    server server3 127.0.0.1:8002 maxconn 32
+    server server4 127.0.0.1:8003 maxconn 32
+    
+    # Preserve original client IP and protocol
+    http-reuse safe
+    option httpchk GET /
+```
+
+For a single-instance setup:
+
+```
+frontend http-in
+    bind *:80
+    server server1 127.0.0.1:8000 maxconn 32
+```
+
 #### 4. Systemd Service File
 
 Create a systemd service to manage the application:
@@ -696,6 +773,56 @@ sudo systemctl enable fasthtmx-admin
 sudo systemctl start fasthtmx-admin
 sudo systemctl status fasthtmx-admin
 ```
+
+#### 4b. Running Multiple Backend Servers
+
+For high-availability deployments with load balancing via HAProxy or Nginx:
+
+**Option 1: Shell Script (Manual)**
+
+```bash
+#!/bin/bash
+# start_servers.sh
+
+for port in 8000 8001 8002 8003; do
+    uvicorn app:app --host 127.0.0.1 --port $port &
+done
+
+wait
+```
+
+Run: `bash start_servers.sh`
+
+This spawns 4 independent processes listening on different ports.
+
+**Option 2: Gunicorn with Multiple Workers (Recommended)**
+
+```bash
+gunicorn \
+    -w 4 \
+    -k uvicorn.workers.UvicornWorker \
+    -b 127.0.0.1:8000 \
+    app:app
+```
+
+- `-w 4` = 4 worker processes
+- Gunicorn manages all workers—easier to stop/restart with a single command
+- Configure this in the systemd service as shown above
+
+Then configure your reverse proxy to point to just `127.0.0.1:8000` (gunicorn distributes requests internally) or to multiple ports if using the shell script approach.
+
+**Option 3: Supervisor Process Manager**
+
+```ini
+[program:fastapi_server]
+command=uvicorn app:app --host 127.0.0.1 --port %(process_num)01d8000s
+process_name=%(program_name)s_%(process_num)02d
+numprocs=4
+autostart=true
+autorestart=true
+```
+
+Supervisor keeps all processes running and automatically restarts any that crash.
 
 #### 5. Docker Deployment
 
