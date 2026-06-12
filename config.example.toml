@@ -42,6 +42,11 @@ another_table = ["lookup_column"]
 # Optional: specify which scripts should run in the background
 # "Script Name 2" = true
 
+[scripts.timeout]
+# Optional: specify timeout in seconds for each script (default: 300)
+# "Script Name 1" = 600
+# "Script Name 2" = 1200
+
 [table_permissions.table_name]
 # Optional: custom display name for this table in the Edit Tables dropdown (if not set, table_name is used)
 # display_name = "Custom Table Name"

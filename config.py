@@ -97,6 +97,18 @@ def is_script_background(script_name: str) -> bool:
     return bg_scripts.get(script_name, False)
 
 
+def get_script_timeout(script_name: str) -> int:
+    """Get execution timeout in seconds for a script (default: 300 seconds)"""
+    if not isinstance(SCRIPTS_CONFIG, dict):
+        return 300
+    # Check timeout subsection
+    timeouts = SCRIPTS_CONFIG.get("timeout", {})
+    timeout = timeouts.get(script_name)
+    if isinstance(timeout, int) and timeout > 0:
+        return timeout
+    return 300
+
+
 def get_table_permissions(table_name: str) -> dict:
     """Get permissions for a table. Returns dict with allow_add, allow_delete, editable_columns"""
     if table_name not in TABLE_PERMISSIONS:

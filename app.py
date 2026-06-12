@@ -29,6 +29,7 @@ from config import (
     can_user_run_scripts,
     get_audit_trail_table_name,
     is_script_background,
+    get_script_timeout,
 )
 from auth import kerberos_auth
 from database import (
@@ -75,11 +76,13 @@ def generate_execution_id():
 
 def add_job(execution_id: str, script_name: str):
     """Add a new background job to the tracker"""
+    timeout = get_script_timeout(script_name)
     with _jobs_lock:
         _script_jobs[execution_id] = {
             "status": "running",
             "script_name": script_name,
             "start_time": time.time(),
+            "timeout": timeout,
             "result": None,
         }
 
@@ -94,18 +97,32 @@ def update_job_result(execution_id: str, result: dict):
 
 
 def get_job_status(execution_id: str) -> dict:
-    """Get the status of a job"""
+    """Get the status of a job including progress"""
     with _jobs_lock:
         if execution_id not in _script_jobs:
             return {"error": "Job not found", "status": "not_found"}
         
         job = _script_jobs[execution_id]
+        timeout = job.get("timeout", 300)
+        start_time = job["start_time"]
+        
+        # Calculate elapsed time and progress
+        if job["status"] == "completed":
+            elapsed_time = job.get("end_time", time.time()) - start_time
+            progress = 100
+        else:
+            elapsed_time = time.time() - start_time
+            progress = min(int((elapsed_time / timeout) * 100), 99)  # Cap at 99% until completion
+        
         return {
             "execution_id": execution_id,
             "status": job["status"],
             "script_name": job["script_name"],
-            "start_time": job["start_time"],
+            "start_time": start_time,
             "end_time": job.get("end_time"),
+            "timeout": timeout,
+            "elapsed_time": elapsed_time,
+            "progress": progress,
             "result": job["result"],
         }
 
@@ -1167,11 +1184,12 @@ def execute_script_internal(script_name: str):
         
         # Execute the script
         print(f"Executing script: {full_script_path}")
+        timeout = get_script_timeout(script_name)
         result = subprocess.run(
             [str(full_script_path)],
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute timeout
+            timeout=timeout
         )
         
         elapsed_time = time.time() - start_time
