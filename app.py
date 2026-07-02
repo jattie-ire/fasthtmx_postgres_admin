@@ -31,6 +31,8 @@ from config import (
     is_script_background,
     get_script_timeout,
     get_script_log_config,
+    get_log_display_max_width,
+    get_log_display_no_wrap,
 )
 from auth import kerberos_auth
 from database import (
@@ -1443,6 +1445,8 @@ async def view_logs(request: Request):
         "logs_by_script": logs_by_script,
         "scripts": list(logs_by_script.keys()),
         "total_logs": total_logs,
+        "log_max_width": get_log_display_max_width(),
+        "log_no_wrap": get_log_display_no_wrap(),
     })
     return html
 

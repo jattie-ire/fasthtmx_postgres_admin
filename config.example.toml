@@ -60,6 +60,12 @@ another_table = ["lookup_column"]
 # Global log viewer settings
 # limit: number of recent logs to display per script (default: 5)
 limit = 5
+# max_width: maximum width of the log viewer modal in pixels (default: 1200)
+max_width = 1200
+# no_wrap: disable line wrapping and enable horizontal scrollbar (default: true)
+# - true: long lines scroll horizontally (good for structured logs)
+# - false: long lines wrap to fit container width
+no_wrap = true
 
 [table_permissions.table_name]
 # Optional: custom display name for this table in the Edit Tables dropdown (if not set, table_name is used)

@@ -253,3 +253,27 @@ def get_log_display_limit() -> int:
         return log_display.get("limit", 5)
     
     return 5
+
+
+def get_log_display_max_width() -> int:
+    """Get the maximum width of the log viewer modal in pixels (default: 1200)"""
+    if not isinstance(SCRIPTS_CONFIG, dict):
+        return 1200
+    
+    log_display = SCRIPTS_CONFIG.get("log_display", {})
+    if isinstance(log_display, dict):
+        return log_display.get("max_width", 1200)
+    
+    return 1200
+
+
+def get_log_display_no_wrap() -> bool:
+    """Get whether line wrapping is disabled for logs (default: True)"""
+    if not isinstance(SCRIPTS_CONFIG, dict):
+        return True
+    
+    log_display = SCRIPTS_CONFIG.get("log_display", {})
+    if isinstance(log_display, dict):
+        return log_display.get("no_wrap", True)
+    
+    return True

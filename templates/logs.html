@@ -63,8 +63,8 @@
                     <h2 id="viewer-filename"></h2>
                     <button onclick="closeLogViewer()" class="logs-btn-close">✕</button>
                 </div>
-                <div class="logs-modal-body">
-                    <pre id="log-content" style="margin: 0; padding: 12px 16px; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-wrap: break-word;"></pre>
+                <div class="logs-modal-body" id="log-modal-body">
+                    <pre id="log-content" style="margin: 0; padding: 12px 16px; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.6;"></pre>
                 </div>
             </div>
         </div>
@@ -151,7 +151,7 @@
             border: 1px solid var(--border-color);
             border-radius: 8px;
             width: 90%;
-            max-width: 1200px;
+            max-width: {{ log_max_width }}px;
             height: 80vh;
             display: flex;
             flex-direction: column;
@@ -210,6 +210,10 @@
             background: var(--bg-content);
         }
 
+        .logs-modal-body.no-wrap {
+            overflow-x: auto;
+        }
+
         .logs-modal-body pre {
             margin: 0;
             padding: 12px 16px;
@@ -219,6 +223,11 @@
             color: var(--text-primary);
             white-space: pre-wrap;
             word-wrap: break-word;
+        }
+
+        .logs-modal-body.no-wrap pre {
+            white-space: pre;
+            word-wrap: normal;
         }
 
         .log-level-error { color: #f48771; font-weight: 700; }
@@ -242,6 +251,8 @@
         .log-debug { color: #a78bfa; font-weight: 500; background: rgba(167, 139, 250, 0.15); padding: 1px 3px; border-radius: 2px; }
         .log-trace { color: #9ca3af; font-weight: 500; background: rgba(156, 163, 175, 0.15); padding: 1px 3px; border-radius: 2px; }
         .log-kv { color: #7dd3fc; }
+        .log-file-func { color: #f97316; font-weight: 600; }
+        .log-number { color: #06b6d4; font-weight: 500; }
     </style>
 
     <script>
@@ -260,6 +271,16 @@
             const lines = logText.split('\n');
             element.innerHTML = '';
             
+            // Apply no-wrap class if configured
+            const modalBody = document.getElementById('log-modal-body');
+            if (modalBody) {
+                if ({{ log_no_wrap|lower }}) {
+                    modalBody.classList.add('no-wrap');
+                } else {
+                    modalBody.classList.remove('no-wrap');
+                }
+            }
+            
             lines.forEach(line => {
                 const lineDiv = document.createElement('div');
                 lineDiv.style.lineHeight = '1.6';
@@ -267,6 +288,10 @@
                 // Define highlighting patterns
                 const patterns = [
                     { regex: /(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3,6})?(?:Z|[+-]\d{2}:\d{2})?)/g, className: 'log-ts' },
+                    // File:function patterns (e.g., app.py:main:process_data)
+                    { regex: /([a-zA-Z_][a-zA-Z0-9_]*\.py(?::[a-zA-Z_][a-zA-Z0-9_]*)*)/g, className: 'log-file-func' },
+                    // Numeric values (integers and floats)
+                    { regex: /\b(\d+\.\d+|\d+)\b/g, className: 'log-number' },
                     { regex: /\b(ERROR|CRITICAL|FATAL)\b/gi, className: 'log-error' },
                     { regex: /\b(WARNING|WARN)\b/gi, className: 'log-warn' },
                     { regex: /\b(INFO)\b/gi, className: 'log-info' },
@@ -274,10 +299,6 @@
                     { regex: /\b(TRACE)\b/gi, className: 'log-trace' },
                     { regex: /([a-zA-Z_][a-zA-Z0-9_-]*)=([^\s]+)/g, className: 'log-kv' },
                 ];
-                
-                let remaining = line;
-                let lastIndex = 0;
-                const fragments = [];
                 
                 // Simple tokenization: find all matches and sort by position
                 let matches = [];

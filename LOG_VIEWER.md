@@ -21,6 +21,8 @@ In `config.toml`:
 
 [scripts.log_display]
 limit = 5
+max_width = 1200
+no_wrap = true
 ```
 
 ### Configuration Options
@@ -49,10 +51,15 @@ Global settings for log viewer:
 
 ```toml
 [scripts.log_display]
-limit = 5  # Number of most recent logs to show per script (default: 5)
+limit = 5           # Number of most recent logs to show per script (default: 5)
+max_width = 1200    # Maximum width of viewer modal in pixels (default: 1200)
+no_wrap = true      # Disable line wrapping, enable horizontal scrollbar (default: true)
 ```
 
-**Why limit?** If a script runs 1000+ times, showing all logs would be slow. This shows the N newest.
+**Options:**
+- `limit` — Maximum number of most recent logs shown per script. If a script runs 1000+ times, this prevents slow loading. (default: 5)
+- `max_width` — Maximum width of the log viewer modal in pixels. Adjust for your screen size. (default: 1200)
+- `no_wrap` — If `true`, log lines won't wrap and will have a horizontal scrollbar for long lines. If `false`, lines wrap normally. (default: true)
 
 ---
 
@@ -90,12 +97,22 @@ For each log file, you see:
 When viewing a log, you'll see:
 
 **Syntax Highlighting:**
-- **Blue text** = Timestamps (e.g., `2026-07-02 09:54:29`)
-- **Red text** = ERROR, CRITICAL, FATAL log levels
-- **Gold text** = WARNING, WARN log levels
-- **Green text** = INFO log level
-- **Purple text** = DEBUG, TRACE log levels
-- **Cyan text** = Key=value pairs (e.g., `color: #5a9fd4`)
+- **Blue text** = Timestamps (ISO 8601 format, e.g., `2026-07-02 09:54:29`)
+- **Orange text** = File and function names (e.g., `app.py:main:process_data`)
+- **Cyan text** = Numeric values - integers and floats (e.g., `1234`, `3.14159`)
+- **Red text** = ERROR, CRITICAL, FATAL log levels (highlighted with background)
+- **Gold text** = WARNING, WARN log levels (highlighted with background)
+- **Green text** = INFO log level (highlighted with background)
+- **Purple text** = DEBUG log level (highlighted with background)
+- **Gray text** = TRACE log level (highlighted with background)
+- **Light cyan text** = Key=value pairs (e.g., `color=red`, `count=42`)
+
+**Display Modes:**
+
+Configured via `no_wrap` setting:
+
+- **`no_wrap = true`** (default): Lines don't wrap. Long log lines scroll horizontally with scrollbar. Best for structured logs with consistent formatting.
+- **`no_wrap = false`**: Lines wrap to fit container width. Good for text-heavy logs that don't need horizontal scrolling.
 
 ---
 
