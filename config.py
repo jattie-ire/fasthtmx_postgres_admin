@@ -214,3 +214,42 @@ def can_user_delete_from_table(user_perms: dict, table_name: str) -> bool:
     table_allows_delete = can_delete_rows(table_name)
     return user_can_delete and table_allows_delete
 
+
+def get_script_log_config(script_name: str) -> dict:
+    """Get log configuration for a script
+    
+    Returns dict with:
+        - directory: path to log directory (None if not configured)
+        - pattern: glob pattern for log files (None if not configured)
+        - display: whether to display log in UI (default: True if configured)
+        - limit: number of recent logs to display per script (default: 5)
+    """
+    if not isinstance(SCRIPTS_CONFIG, dict):
+        return {"directory": None, "pattern": None, "display": False, "limit": 5}
+    
+    log_config = SCRIPTS_CONFIG.get("log_config", {})
+    if isinstance(log_config, dict) and script_name in log_config:
+        cfg = log_config[script_name]
+        if isinstance(cfg, dict):
+            return {
+                "directory": cfg.get("directory"),
+                "pattern": cfg.get("pattern"),
+                "display": cfg.get("display", True),
+                "limit": cfg.get("limit", 5)
+            }
+    
+    return {"directory": None, "pattern": None, "display": False, "limit": 5}
+
+
+
+
+def get_log_display_limit() -> int:
+    """Get the maximum number of logs per script to display in viewer (default: 5)"""
+    if not isinstance(SCRIPTS_CONFIG, dict):
+        return 5
+    
+    log_display = SCRIPTS_CONFIG.get("log_display", {})
+    if isinstance(log_display, dict):
+        return log_display.get("limit", 5)
+    
+    return 5

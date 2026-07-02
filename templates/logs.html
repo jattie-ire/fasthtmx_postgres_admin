@@ -1,0 +1,378 @@
+{% extends "base.html" %}
+
+{% block title %}Log Viewer{% endblock %}
+
+{% block page_title %}Log Viewer{% endblock %}
+
+{% block extra_css %}
+{% endblock %}
+
+{% block page_content %}
+    
+    <div style="padding: 20px; background: var(--bg-page);">
+        <h1 style="margin: 0 0 20px 0; color: var(--text-primary); font-size: 28px;">📋 Log Viewer</h1>
+
+        {% if logs_by_script %}
+            {% for script_name, script_logs in logs_by_script.items() %}
+            <div style="background: var(--bg-content); border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px; overflow: hidden;">
+                <div class="log-script-header" onclick="toggleScriptLogs(this)">
+                    <h3 style="margin: 0; display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none;">
+                        <span class="toggle-arrow">▶</span>
+                        <span>{{ script_name }}</span>
+                        <span style="background: rgba(255,255,255,0.15); padding: 2px 8px; border-radius: 12px; font-size: 12px; margin-left: auto; font-weight: normal;">{{ script_logs|length }} log(s)</span>
+                    </h3>
+                </div>
+                <div class="log-script-content" style="max-height: 999px; overflow: hidden; transition: max-height 0.3s ease;">
+                    <div class="table-container">
+                        <table class="table-editor">
+                            <thead>
+                                <tr class="table-header-row">
+                                    <th class="table-header-cell">Filename</th>
+                                    <th class="table-header-cell">Date &amp; Time</th>
+                                    <th class="table-header-cell">Size</th>
+                                    <th class="table-header-actions">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for log in script_logs %}
+                                <tr class="table-data-row" data-log-file="{{ log.log_file }}" data-log-name="{{ log.filename }}">
+                                    <td class="table-data-cell" style="font-family: 'Courier New', monospace; font-size: 12px;" title="{{ log.filename }}">{{ log.filename }}</td>
+                                    <td class="table-data-cell">{{ log.timestamp }}</td>
+                                    <td class="table-data-cell">{{ log.size_kb }} KB</td>
+                                    <td class="table-actions-cell" style="justify-content: center;">
+                                        <button onclick="loadLog(event)" class="log-view-btn" title="View log">📂</button>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+        <div style="padding: 40px; text-align: center; background: var(--bg-content); border-radius: 8px; border: 1px solid var(--border-color); color: var(--text-secondary);">
+            <p>No log files found. Check that scripts are configured with log locations in <code style="background: var(--bg-table-row-alt); padding: 2px 6px; border-radius: 3px; color: var(--text-primary);">config.toml</code>.</p>
+        </div>
+        {% endif %}
+
+        <!-- Log Viewer Modal -->
+        <div id="log-modal" class="logs-modal" style="display: none;">
+            <div class="logs-modal-content">
+                <div class="logs-modal-header">
+                    <h2 id="viewer-filename"></h2>
+                    <button onclick="closeLogViewer()" class="logs-btn-close">✕</button>
+                </div>
+                <div class="logs-modal-body">
+                    <pre id="log-content" style="margin: 0; padding: 12px 16px; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-wrap: break-word;"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .log-script-header {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--bg-table-header);
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.2s;
+        }
+
+        .log-script-header:hover {
+            opacity: 0.9;
+        }
+
+        .toggle-arrow {
+            display: inline-block;
+            transition: transform 0.3s;
+            color: white;
+            font-size: 12px;
+            min-width: 12px;
+        }
+
+        .log-script-header:not(.collapsed) .toggle-arrow {
+            transform: rotate(90deg);
+        }
+
+        .log-row {
+            background: var(--bg-content);
+        }
+
+        .log-row:nth-child(even) {
+            background: var(--bg-table-row-alt);
+        }
+
+        .log-row:hover {
+            background: var(--bg-table-row-hover);
+        }
+
+        .log-view-btn {
+            background: none;
+            border: 1px solid var(--border-color);
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--text-primary);
+            transition: all 0.2s;
+        }
+
+        .log-view-btn:hover {
+            background: var(--bg-button-primary);
+            color: white;
+            border-color: var(--bg-button-primary);
+        }
+
+        /* Modal Styles */
+        .logs-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            animation: fadeIn 0.2s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .logs-modal-content {
+            background: var(--bg-content);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            width: 90%;
+            max-width: 1200px;
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            animation: slideUp 0.3s ease;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .logs-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-table-header);
+        }
+
+        .logs-modal-header h2 {
+            margin: 0;
+            font-size: 14px;
+            color: white;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .logs-btn-close {
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            color: white;
+            padding: 4px 8px;
+            transition: all 0.2s ease;
+            border-radius: 4px;
+        }
+
+        .logs-btn-close:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        .logs-modal-body {
+            flex: 1;
+            overflow-y: auto;
+            background: var(--bg-content);
+        }
+
+        .logs-modal-body pre {
+            margin: 0;
+            padding: 12px 16px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.6;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .log-level-error { color: #f48771; font-weight: 700; }
+        .log-level-critical { color: #ff5555; font-weight: 700; }
+        .log-level-warn { color: #dcdcaa; font-weight: 700; }
+        .log-level-warning { color: #dcdcaa; font-weight: 700; }
+        .log-level-info { color: #56d4dd; font-weight: 600; }
+        .log-level-debug { color: #7a8a8a; font-weight: 600; }
+        .log-timestamp { color: #6e8794; }
+        .log-function { color: #e6b450; font-weight: 500; }
+        .log-epoch { color: #5a8f6f; }
+        .log-key { color: #9cdcfe; }
+        .log-value { color: #ce9178; }
+        .log-message { color: #d4d4d4; }
+
+        /* Log highlighting classes */
+        .log-ts { color: #5a9fd4; font-weight: 600; }
+        .log-error { color: #ff6b6b; font-weight: 700; background: rgba(255, 107, 107, 0.15); padding: 1px 3px; border-radius: 2px; }
+        .log-warn { color: #ffd700; font-weight: 600; background: rgba(255, 215, 0, 0.15); padding: 1px 3px; border-radius: 2px; }
+        .log-info { color: #51cf66; font-weight: 600; background: rgba(81, 207, 102, 0.15); padding: 1px 3px; border-radius: 2px; }
+        .log-debug { color: #a78bfa; font-weight: 500; background: rgba(167, 139, 250, 0.15); padding: 1px 3px; border-radius: 2px; }
+        .log-trace { color: #9ca3af; font-weight: 500; background: rgba(156, 163, 175, 0.15); padding: 1px 3px; border-radius: 2px; }
+        .log-kv { color: #7dd3fc; }
+    </style>
+
+    <script>
+        // Theme management (removed - using custom highlighting)
+        function toggleScriptLogs(header) {
+            header.classList.toggle('collapsed');
+            const content = header.nextElementSibling;
+            if (header.classList.contains('collapsed')) {
+                content.style.maxHeight = '0';
+            } else {
+                content.style.maxHeight = '999px';
+            }
+        }
+
+        function highlightLogContent(element, logText) {
+            const lines = logText.split('\n');
+            element.innerHTML = '';
+            
+            lines.forEach(line => {
+                const lineDiv = document.createElement('div');
+                lineDiv.style.lineHeight = '1.6';
+                
+                // Define highlighting patterns
+                const patterns = [
+                    { regex: /(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d{3,6})?(?:Z|[+-]\d{2}:\d{2})?)/g, className: 'log-ts' },
+                    { regex: /\b(ERROR|CRITICAL|FATAL)\b/gi, className: 'log-error' },
+                    { regex: /\b(WARNING|WARN)\b/gi, className: 'log-warn' },
+                    { regex: /\b(INFO)\b/gi, className: 'log-info' },
+                    { regex: /\b(DEBUG)\b/gi, className: 'log-debug' },
+                    { regex: /\b(TRACE)\b/gi, className: 'log-trace' },
+                    { regex: /([a-zA-Z_][a-zA-Z0-9_-]*)=([^\s]+)/g, className: 'log-kv' },
+                ];
+                
+                let remaining = line;
+                let lastIndex = 0;
+                const fragments = [];
+                
+                // Simple tokenization: find all matches and sort by position
+                let matches = [];
+                patterns.forEach(({ regex, className }) => {
+                    let match;
+                    while ((match = regex.exec(line)) !== null) {
+                        matches.push({
+                            start: match.index,
+                            end: match.index + match[0].length,
+                            text: match[0],
+                            className: className,
+                            fullMatch: match
+                        });
+                    }
+                });
+                
+                // Sort matches by start position
+                matches.sort((a, b) => a.start - b.start);
+                
+                // Remove overlapping matches
+                const filtered = [];
+                let lastEnd = 0;
+                matches.forEach(m => {
+                    if (m.start >= lastEnd) {
+                        filtered.push(m);
+                        lastEnd = m.end;
+                    }
+                });
+                
+                // Build the line with proper spans
+                let pos = 0;
+                filtered.forEach(match => {
+                    if (pos < match.start) {
+                        const textNode = document.createTextNode(line.substring(pos, match.start));
+                        lineDiv.appendChild(textNode);
+                    }
+                    
+                    const span = document.createElement('span');
+                    span.className = match.className;
+                    span.textContent = match.text;
+                    lineDiv.appendChild(span);
+                    pos = match.end;
+                });
+                
+                // Add remaining text
+                if (pos < line.length) {
+                    const textNode = document.createTextNode(line.substring(pos));
+                    lineDiv.appendChild(textNode);
+                }
+                
+                element.appendChild(lineDiv);
+            });
+        }
+
+        function loadLog(event) {
+            event.preventDefault();
+            const row = event.currentTarget.closest('.table-data-row');
+            const logFile = row.getAttribute('data-log-file');
+            const logName = row.getAttribute('data-log-name');
+            const modal = document.getElementById('log-modal');
+            const content = document.getElementById('log-content');
+            const filename = document.getElementById('viewer-filename');
+
+            modal.style.display = 'flex';
+            content.textContent = 'Loading...';
+            filename.textContent = logName;
+            
+            const encodedPath = encodeURIComponent(logFile);
+
+            fetch(`/api/logs/${encodedPath}`)
+                .then(response => response.ok ? response.json() : Promise.reject(response.statusText))
+                .then(data => {
+                    if (data.success) {
+                        highlightLogContent(content, data.content);
+                    } else {
+                        content.textContent = `Error: ${data.error}`;
+                    }
+                })
+                .catch(error => {
+                    content.textContent = `Error loading log: ${error}`;
+                });
+        }
+
+        function closeLogViewer() {
+            document.getElementById('log-modal').style.display = 'none';
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && document.getElementById('log-modal').style.display === 'flex') {
+                closeLogViewer();
+            }
+        });
+
+        document.getElementById('log-modal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'log-modal') closeLogViewer();
+        });
+    </script>
+{% endblock %}

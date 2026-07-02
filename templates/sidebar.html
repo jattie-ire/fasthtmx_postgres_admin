@@ -26,6 +26,7 @@
                 <option value="">Loading scripts...</option>
             </select>
             <button onclick="executeScript()" class="btn btn-primary" style="font-size: 14px; padding: 8px 12px;">Execute Script</button>
+            <a href="/logs" {% if page == 'logs' %}class="active"{% endif %} style="display: block; padding: 8px 12px; text-align: center; background: var(--bg-button-secondary); color: var(--text-primary); border-radius: 4px; text-decoration: none; font-size: 14px; transition: background 0.3s;">📋 View Logs</a>
             <div id="script-status-indicator" style="padding: 8px; text-align: center; display: none; background: #e3f2fd; border-radius: 4px; color: #1976d2; font-size: 12px; cursor: pointer; transition: background 0.3s;" onclick="window.location.href='/background-scripts'" title="Click to view background scripts">
                 🔄 Running: <span id="active-script-count">0</span>
             </div>

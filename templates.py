@@ -25,8 +25,16 @@ def format_datetime(value):
     return value
 
 
+def basename_filter(value):
+    """Extract filename from a path"""
+    if value is None:
+        return ""
+    return Path(value).name
+
+
 # Add custom Jinja2 filters
 jinja_env.filters['format_datetime'] = format_datetime
+jinja_env.filters['basename'] = basename_filter
 
 
 def render_template(template_name: str, context: dict) -> str:

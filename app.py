@@ -30,6 +30,7 @@ from config import (
     get_audit_trail_table_name,
     is_script_background,
     get_script_timeout,
+    get_script_log_config,
 )
 from auth import kerberos_auth
 from database import (
@@ -55,6 +56,9 @@ from database import (
     delete_user,
     log_audit_event,
     get_primary_key,
+    find_latest_log_file,
+    read_log_file,
+    list_all_logs,
 )
 from templates import render_template
 
@@ -344,7 +348,7 @@ async def dashboard(request: Request):
                 traceback.print_exc()
                 view_name = f"ERROR: {str(e)}"
             finally:
-                conn.close()
+                return_db_connection(conn)
     
     # Get display text from config
     display_text = config.get("dashboard", {}).get("display_text", "")
@@ -435,11 +439,12 @@ async def api_get_users(request: Request):
         cursor.execute(query)
         users = cursor.fetchall()
         cursor.close()
-        conn.close()
         return {"users": [dict(u) for u in users]}
     except Exception as e:
         print(f"ERROR fetching users: {e}")
         return {"error": str(e)}
+    finally:
+        return_db_connection(conn)
 
 
 @app.post("/api/admin/users/{user_to_edit}")
@@ -478,12 +483,13 @@ async def api_update_user(user_to_edit: str, request: Request):
         cursor.execute(update_query, (view, edit, add, delete, admin, run_scripts, export_data, import_data, user_to_edit))
         conn.commit()
         cursor.close()
-        conn.close()
         
         return {"success": True, "message": f"User '{user_to_edit}' permissions updated"}
     except Exception as e:
         print(f"ERROR updating user: {e}")
         return {"error": str(e)}
+    finally:
+        return_db_connection(conn)
 
 
 @app.delete("/api/admin/users/{user_to_delete}")
@@ -867,7 +873,6 @@ async def api_update_row(table_name: str, row_id: str, request: Request):
         cursor.execute(query, values)
         conn.commit()
         cursor.close()
-        conn.close()
         
         return {"success": True, "message": "Row updated"}
     except Exception as e:
@@ -875,6 +880,8 @@ async def api_update_row(table_name: str, row_id: str, request: Request):
         import traceback
         traceback.print_exc()
         return {"error": str(e)}
+    finally:
+        return_db_connection(conn)
 
 
 @app.get("/api/tables")
@@ -1405,6 +1412,94 @@ async def background_scripts_page(request: Request):
             "kerberos_domain": config.get("app", {}).get("kerberos_domain", "LOCAL")
         }
     )
+
+
+# ============================================================================
+# LOG VIEWER ENDPOINTS
+# ============================================================================
+
+@app.get("/logs", response_class=HTMLResponse)
+async def view_logs(request: Request):
+    """View all available log files from configured scripts"""
+    username = request.cookies.get("username")
+    if not username:
+        return RedirectResponse(url="/", status_code=303)
+    
+    user_perms = get_user_permissions(username)
+    if not can_user_run_scripts(user_perms):
+        return render_template("error.html", {"error": "You do not have permission to view logs", "username": username})
+    
+    # Get all available logs organized by script
+    logs_by_script = list_all_logs()
+    
+    # Count total logs across all scripts
+    total_logs = sum(len(script_logs) for script_logs in logs_by_script.values())
+    
+    html = render_template("logs.html", {
+        "username": username,
+        "is_admin": is_user_admin(user_perms),
+        "can_run_scripts": can_user_run_scripts(user_perms),
+        "page": "logs",
+        "logs_by_script": logs_by_script,
+        "scripts": list(logs_by_script.keys()),
+        "total_logs": total_logs,
+    })
+    return html
+
+
+@app.get("/api/logs")
+async def api_get_logs(request: Request):
+    """API endpoint to get all available logs organized by script"""
+    username = request.cookies.get("username")
+    if not username:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    
+    user_perms = get_user_permissions(username)
+    if not can_user_run_scripts(user_perms):
+        return JSONResponse({"error": "Permission denied"}, status_code=403)
+    
+    logs_by_script = list_all_logs()
+    return JSONResponse({"logs_by_script": logs_by_script})
+
+
+@app.get("/api/logs/{log_file:path}")
+async def api_read_log(log_file: str, request: Request):
+    """API endpoint to read a specific log file content"""
+    username = request.cookies.get("username")
+    if not username:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    
+    user_perms = get_user_permissions(username)
+    if not can_user_run_scripts(user_perms):
+        return JSONResponse({"error": "Permission denied"}, status_code=403)
+    
+    try:
+        # Decode the URL-encoded path
+        from urllib.parse import unquote
+        decoded_path = unquote(log_file)
+        
+        # Security: ensure path is within expected log directories
+        from pathlib import Path
+        import os
+        resolved_path = Path(decoded_path).resolve()
+        
+        # Verify file exists
+        if not resolved_path.exists() or not resolved_path.is_file():
+            return JSONResponse({"error": "Log file not found"}, status_code=404)
+        
+        # Read the file
+        content = read_log_file(str(resolved_path))
+        
+        return JSONResponse({
+            "success": True,
+            "filename": resolved_path.name,
+            "path": str(resolved_path),
+            "content": content
+        })
+    
+    except Exception as e:
+        print(f"ERROR reading log: {e}")
+        return JSONResponse({"error": f"Error reading log: {str(e)}"}, status_code=500)
 
 
 # ============================================================================

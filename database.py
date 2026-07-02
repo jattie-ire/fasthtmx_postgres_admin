@@ -980,3 +980,204 @@ def delete_user(username: str) -> bool:
         import traceback
         traceback.print_exc()
         return False
+
+
+# ============================================================================
+# LOG FILE FUNCTIONS
+# ============================================================================
+
+def find_latest_log_file(directory: str, pattern: str) -> tuple:
+    """Find the latest log file in a directory matching a glob pattern.
+    
+    Logs are assumed to have epoch timestamp format: name_<epoch>.log
+    Returns latest by epoch number (highest = most recent).
+    
+    Args:
+        directory: Path to search for log files
+        pattern: Glob pattern (e.g., "debug_log_*.log")
+    
+    Returns:
+        (file_path: str, timestamp: int) or (None, None) if not found
+    """
+    from pathlib import Path
+    import re
+    
+    try:
+        log_dir = Path(directory).resolve()
+        if not log_dir.exists() or not log_dir.is_dir():
+            print(f"DEBUG: Log directory not found: {log_dir}")
+            return None, None
+        
+        # Find all files matching pattern
+        matching_files = list(log_dir.glob(pattern))
+        
+        if not matching_files:
+            print(f"DEBUG: No log files found matching {pattern} in {log_dir}")
+            return None, None
+        
+        # Extract epoch from filename and find latest
+        # Pattern: name_<epoch>.log
+        latest_file = None
+        latest_epoch = -1
+        
+        for file_path in matching_files:
+            filename = file_path.name
+            # Extract epoch using regex: look for numbers before .log
+            match = re.search(r'(\d+)\.log$', filename)
+            if match:
+                epoch = int(match.group(1))
+                if epoch > latest_epoch:
+                    latest_epoch = epoch
+                    latest_file = file_path
+        
+        if latest_file:
+            print(f"DEBUG: Found latest log file: {latest_file} (epoch: {latest_epoch})")
+            return str(latest_file), latest_epoch
+        
+        return None, None
+    
+    except Exception as e:
+        print(f"ERROR finding latest log file in {directory}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None, None
+
+
+def read_log_file(file_path: str, max_lines: int = 1000) -> str:
+    """Read log file content, optionally limited to last N lines.
+    
+    Args:
+        file_path: Full path to log file
+        max_lines: Maximum number of lines to read (0 = all)
+    
+    Returns:
+        File content as string, or error message if failed
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+        
+        # Return last N lines if max_lines set
+        if max_lines > 0 and len(lines) > max_lines:
+            lines = lines[-max_lines:]
+        
+        return ''.join(lines)
+    
+    except Exception as e:
+        return f"ERROR reading log file: {e}"
+
+
+def list_all_logs() -> dict:
+    """List all available log files organized by script.
+    
+    Returns dict of logs by script name (each script limited by its config):
+        {
+            "Script Name 1": [
+                {
+                    "log_file": "/path/to/debug_log_1781251602.log",
+                    "filename": "debug_log_1781251602.log",
+                    "epoch": 1781251602,
+                    "timestamp": "2026-07-02 14:30:45",
+                    "size_kb": 123.45
+                },
+                ...
+            ],
+            "Script Name 2": [...],
+        }
+    """
+    from config import get_script_log_config
+    from pathlib import Path
+    import re
+    from datetime import datetime
+    
+    logs_by_script = {}
+    
+    try:
+        # Import SCRIPTS_CONFIG to get all configured scripts
+        from config import SCRIPTS_CONFIG
+        
+        if not isinstance(SCRIPTS_CONFIG, dict):
+            return logs_by_script
+        
+        # Get log config section
+        log_config = SCRIPTS_CONFIG.get("log_config", {})
+        if not isinstance(log_config, dict):
+            return logs_by_script
+        
+        app_dir = Path(__file__).parent
+        
+        # Iterate through each script with log config
+        for script_name in log_config:
+            cfg = log_config[script_name]
+            if not isinstance(cfg, dict):
+                continue
+            
+            directory = cfg.get("directory")
+            pattern = cfg.get("pattern")
+            limit = cfg.get("limit", 5)
+            
+            if not directory or not pattern:
+                continue
+            
+            try:
+                log_dir = (app_dir / directory).resolve()
+                
+                if not log_dir.exists() or not log_dir.is_dir():
+                    continue
+                
+                script_logs = []
+                
+                # Find all files matching pattern
+                matching_files = list(log_dir.glob(pattern))
+                
+                for file_path in matching_files:
+                    filename = file_path.name
+                    # Extract epoch using regex
+                    match = re.search(r'(\d+)\.log$', filename)
+                    if match:
+                        epoch = int(match.group(1))
+                        try:
+                            size_kb = file_path.stat().st_size / 1024
+                        except:
+                            size_kb = 0
+                        
+                        # Convert epoch to datetime
+                        try:
+                            dt = datetime.fromtimestamp(epoch)
+                            timestamp = dt.strftime("%Y-%m-%d %H:%M:%S")
+                        except:
+                            timestamp = f"Epoch {epoch}"
+                        
+                        script_logs.append({
+                            "log_file": str(file_path),
+                            "filename": filename,
+                            "epoch": epoch,
+                            "timestamp": timestamp,
+                            "size_kb": round(size_kb, 2)
+                        })
+                
+                # Sort by epoch descending (newest first)
+                script_logs.sort(key=lambda x: x["epoch"], reverse=True)
+                
+                # Apply limit
+                if limit > 0:
+                    script_logs = script_logs[:limit]
+                
+                if script_logs:
+                    logs_by_script[script_name] = script_logs
+            
+            except Exception as e:
+                print(f"ERROR listing logs for script '{script_name}': {e}")
+                continue
+        
+        return logs_by_script
+    
+    except Exception as e:
+        print(f"ERROR listing all logs: {e}")
+        import traceback
+        traceback.print_exc()
+        return logs_by_script
+    
+    except Exception as e:
+        return f"ERROR reading log file: {e}"
+
