@@ -47,6 +47,20 @@ another_table = ["lookup_column"]
 # "Script Name 1" = 600
 # "Script Name 2" = 1200
 
+[scripts.log_config]
+# Configure log file discovery for each script
+# Maps script name to { directory, pattern, display }
+# - directory: absolute or relative path to logs directory
+# - pattern: glob pattern for log files (e.g., "debug_log_*.log")
+# - display: true/false to show in log viewer
+"Script Name 1" = { directory = "/var/log/scripts", pattern = "app_*.log", display = true }
+"Script Name 2" = { directory = "../logs", pattern = "*.log", display = true }
+
+[scripts.log_display]
+# Global log viewer settings
+# limit: number of recent logs to display per script (default: 5)
+limit = 5
+
 [table_permissions.table_name]
 # Optional: custom display name for this table in the Edit Tables dropdown (if not set, table_name is used)
 # display_name = "Custom Table Name"

@@ -96,6 +96,7 @@ python deploy_tools.py validate-config
 - ✓ `fastapi_users` table exists with correct schema
 - ✓ User table has all required columns: `user`, `view`, `edit`, `add`, `delete`, `admin`, `run_scripts`, `export_data`, `import_data`
 - ✓ Audit trail table configuration is valid (will be created on app startup if configured)
+- ✓ Log file paths and patterns are valid (if configured)
 
 **Output example:**
 ```
