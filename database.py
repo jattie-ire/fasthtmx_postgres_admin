@@ -1070,7 +1070,7 @@ def read_log_file(file_path: str, max_lines: int = 1000) -> str:
 def list_all_logs() -> dict:
     """List all available log files organized by script.
     
-    Returns dict of logs by script name (each script limited by its config):
+    Returns dict of logs by script name (limited by global log_display.limit config):
         {
             "Script Name 1": [
                 {
@@ -1085,12 +1085,13 @@ def list_all_logs() -> dict:
             "Script Name 2": [...],
         }
     """
-    from config import get_script_log_config
+    from config import get_script_log_config, get_log_display_limit
     from pathlib import Path
     import re
     from datetime import datetime
     
     logs_by_script = {}
+    limit = get_log_display_limit()  # Get global limit from config
     
     try:
         # Import SCRIPTS_CONFIG to get all configured scripts
@@ -1114,7 +1115,6 @@ def list_all_logs() -> dict:
             
             directory = cfg.get("directory")
             pattern = cfg.get("pattern")
-            limit = cfg.get("limit", 5)
             
             if not directory or not pattern:
                 continue
